@@ -1,0 +1,132 @@
+// ==========================================
+// FICHIER: server.js (MISE À JOUR FINALE)
+// ==========================================
+const express = require('express');
+const dotenv = require('dotenv');
+const cors = require('cors');
+const db = require('./models');
+const errorHandler = require('./middleware/errorHandler');
+
+// Charger les variables d'environnement
+dotenv.config();
+
+// Initialiser Express
+const app = express();
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Route de test
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: '🚀 API GAZBF v2.0 - Serveur opérationnel',
+    version: '2.0.0',
+    database: 'MySQL + Sequelize',
+    endpoints: {
+      auth: '/api/auth',
+      products: '/api/products',
+      orders: '/api/orders',
+      subscriptions: '/api/subscriptions',
+      reviews: '/api/reviews',
+      addresses: '/api/addresses'
+    }
+  });
+});
+
+// Route de test de connexion DB
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.sequelize.authenticate();
+    res.json({
+      success: true,
+      message: '✅ Base de données connectée',
+      database: db.sequelize.config.database
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: '❌ Erreur de connexion à la base de données',
+      error: error.message
+    });
+  }
+});
+
+// ==========================================
+// ROUTES API
+// ==========================================
+app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/products', require('./routes/productRoutes'));
+app.use('/api/orders', require('./routes/orderRoutes'));
+app.use('/api/subscriptions', require('./routes/subscriptionRoutes'));
+app.use('/api/reviews', require('./routes/reviewRoutes'));
+app.use('/api/addresses', require('./routes/addressRoutes'));
+app.use('/api/seller', require('./routes/sellerRoutes'));
+
+// Gestion des erreurs 404
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route non trouvée'
+  });
+});
+
+// Middleware de gestion des erreurs
+app.use(errorHandler);
+
+// Connexion à la base de données et démarrage du serveur
+const PORT = process.env.PORT || 5000;
+
+db.sequelize.authenticate()
+  .then(() => {
+    console.log('✅ Connexion MySQL établie avec succès');
+    
+    // Synchroniser les modèles (en développement uniquement)
+    if (process.env.NODE_ENV === 'development') {
+      db.sequelize.sync({ alter: false })
+        .then(() => {
+          console.log('✅ Modèles synchronisés');
+        });
+    }
+    
+    app.listen(PORT, () => {
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`🚀 API GAZBF v2.0 - Serveur démarré`);
+      console.log(`${'='.repeat(60)}`);
+      console.log(`📍 Port: ${PORT}`);
+      console.log(`🌍 Environnement: ${process.env.NODE_ENV}`);
+      console.log(`💾 Base de données: MySQL`);
+      console.log(`\n📡 Routes disponibles:\n`);
+      console.log(`🔐 AUTH:`);
+      console.log(`   POST   /api/auth/register`);
+      console.log(`   POST   /api/auth/verify-otp`);
+      console.log(`   POST   /api/auth/login`);
+      console.log(`   GET    /api/auth/me`);
+      console.log(`\n📦 PRODUITS:`);
+      console.log(`   GET    /api/products/search`);
+      console.log(`   POST   /api/products`);
+      console.log(`   GET    /api/products/my-products`);
+      console.log(`\n🛒 COMMANDES:`);
+      console.log(`   POST   /api/orders`);
+      console.log(`   GET    /api/orders/my-orders`);
+      console.log(`   GET    /api/orders/received`);
+      console.log(`\n💳 ABONNEMENTS:`);
+      console.log(`   GET    /api/subscriptions/plans`);
+      console.log(`   POST   /api/subscriptions`);
+      console.log(`   GET    /api/subscriptions/my-subscription`);
+      console.log(`\n⭐ AVIS:`);
+      console.log(`   POST   /api/reviews`);
+      console.log(`   GET    /api/reviews/seller/:sellerId`);
+      console.log(`   GET    /api/reviews/my-reviews`);
+      console.log(`\n📍 ADRESSES:`);
+      console.log(`   POST   /api/addresses`);
+      console.log(`   GET    /api/addresses`);
+      console.log(`${'='.repeat(60)}\n`);
+    });
+  })
+  .catch(err => {
+    console.error('❌ Erreur de connexion à MySQL:', err.message);
+    process.exit(1);
+  });
