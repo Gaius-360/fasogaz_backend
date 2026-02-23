@@ -17,7 +17,7 @@ const app = express();
 // Middleware
 const corsOptions = {
   origin: [
-    process.env.FRONTEND_URL,   // URL Vercel en production
+    process.env.FRONTEND_URL,   
     'http://localhost:5173',     // Dev local
     'http://localhost:3000'
   ],
