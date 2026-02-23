@@ -26,7 +26,7 @@ module.exports = {
   logging: false,
   dialectOptions: {
     ssl: {
-      rejectUnauthorized: false  // ← nécessaire pour Railway
+      rejectUnauthorized: false  
     }
   },
   pool: {
