@@ -1,182 +1,87 @@
 // ==========================================
-// FICHIER: src/api/subscriptionService.js (AVEC FALLBACK)
+// FICHIER: src/api/subscriptionService.js
+// Services API pour les abonnements
 // ==========================================
-import api from './axios';
 
-// Plans de démonstration si l'API échoue
-const DEMO_PLANS = [
-  {
-    id: 'plan-1',
-    name: 'Hebdomadaire',
-    planType: 'weekly',
-    price: 500,
-    duration: 7,
-    role: 'client'
-  },
-  {
-    id: 'plan-2',
-    name: 'Mensuel',
-    planType: 'monthly',
-    price: 1500,
-    duration: 30,
-    role: 'client'
-  },
-  {
-    id: 'plan-3',
-    name: 'Annuel',
-    planType: 'yearly',
-    price: 15000,
-    duration: 365,
-    role: 'client'
-  }
-];
-
-const subscriptionService = {
-  // Obtenir les plans
-  getPlans: async (role) => {
+export const subscriptionService = {
+  /**
+   * Récupérer mon abonnement actuel
+   */
+  getMySubscription: async () => {
     try {
-      const params = role ? { role } : {};
-      const response = await api.get('/subscriptions/plans', { params });
-      
-      // Vérifier que la réponse contient des données valides
-      if (response.data && response.data.data) {
-        const plans = Array.isArray(response.data.data) 
-          ? response.data.data 
-          : [];
-        
-        return {
-          success: true,
-          data: plans
-        };
-      }
-      
-      // Fallback sur les plans de démo
-      console.warn('API plans invalide, utilisation des plans de démo');
-      return {
-        success: true,
-        data: DEMO_PLANS.filter(p => !role || p.role === role)
-      };
+      const response = await apiClient.get('/subscriptions/my-subscription');
+      return response.data;
     } catch (error) {
-      console.error('Erreur lors du chargement des plans:', error);
-      
-      // En cas d'erreur, retourner les plans de démo
-      return {
-        success: true,
-        data: DEMO_PLANS.filter(p => !role || p.role === role)
-      };
+      console.error('Erreur récupération abonnement:', error);
+      throw error;
     }
   },
 
-  // Créer un abonnement
-  createSubscription: async (subscriptionData) => {
+  /**
+   * Créer un nouvel abonnement
+   */
+  createSubscription: async (data) => {
     try {
-      const response = await api.post('/subscriptions', subscriptionData);
+      const response = await apiClient.post('/subscriptions', data);
       return response.data;
     } catch (error) {
       console.error('Erreur création abonnement:', error);
-      
-      // Simulation en mode démo
-      return {
-        success: true,
-        data: {
-          transactionRef: `DEMO-${Date.now()}`,
-          paymentUrl: '#',
-          message: 'Mode démo: Abonnement simulé'
-        }
-      };
+      throw error;
     }
   },
 
-  // Confirmer le paiement
-  confirmPayment: async (transactionRef, externalRef) => {
+  /**
+   * Renouvellement anticipé (une seule fois avant expiration)
+   * Prolonge la date d'expiration actuelle
+   */
+  earlyRenewal: async (paymentData) => {
     try {
-      const response = await api.post('/subscriptions/confirm-payment', {
-        transactionRef,
-        externalRef
-      });
+      const response = await apiClient.put('/subscriptions/early-renewal', paymentData);
       return response.data;
     } catch (error) {
-      console.error('Erreur confirmation paiement:', error);
-      
-      // Simulation en mode démo
-      return {
-        success: true,
-        data: {
-          message: 'Paiement confirmé (mode démo)'
-        }
-      };
+      console.error('Erreur renouvellement anticipé:', error);
+      throw error;
     }
   },
 
-  // Obtenir mon abonnement
-  getMySubscription: async () => {
+  /**
+   * Renouveler un abonnement
+   */
+  renewSubscription: async (paymentData) => {
     try {
-      const response = await api.get('/subscriptions/my-subscription');
-      
-      // Vérifier la structure de la réponse
-      if (response.data) {
-        return {
-          success: true,
-          data: response.data.data || response.data
-        };
-      }
-      
-      // Pas d'abonnement
-      return {
-        success: true,
-        data: {
-          subscription: null,
-          status: {
-            isExpired: false,
-            willExpireSoon: false,
-            daysRemaining: 0
-          },
-          transactions: []
-        }
-      };
+      const response = await apiClient.put('/subscriptions/renew', paymentData);
+      return response.data;
     } catch (error) {
-      console.error('Erreur chargement abonnement:', error);
-      
-      // Retourner une structure vide
-      return {
-        success: true,
-        data: {
-          subscription: null,
-          status: {
-            isExpired: false,
-            willExpireSoon: false,
-            daysRemaining: 0
-          },
-          transactions: []
-        }
-      };
+      console.error('Erreur renouvellement abonnement:', error);
+      throw error;
     }
   },
 
-  // Obtenir mes transactions
-  getMyTransactions: async () => {
+  /**
+   * Supprimer immédiatement l'abonnement actif
+   */
+  deleteSubscription: async () => {
     try {
-      const response = await api.get('/subscriptions/transactions');
-      
-      if (response.data && response.data.data) {
-        return {
-          success: true,
-          data: Array.isArray(response.data.data) ? response.data.data : []
-        };
-      }
-      
-      return {
-        success: true,
-        data: []
-      };
+      const response = await apiClient.delete('/subscriptions');
+      return response.data;
     } catch (error) {
-      console.error('Erreur chargement transactions:', error);
-      return {
-        success: true,
-        data: []
-      };
+      console.error('Erreur suppression abonnement:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Récupérer les plans disponibles
+   */
+  getAvailablePlans: async () => {
+    try {
+      const response = await apiClient.get('/subscriptions/plans');
+      return response.data;
+    } catch (error) {
+      console.error('Erreur récupération plans:', error);
+      throw error;
     }
   }
 };
 
-export default subscriptionService;
+

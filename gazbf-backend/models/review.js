@@ -1,6 +1,7 @@
 // ==========================================
-// FICHIER: models/review.js
+// FICHIER: models/review.js - AVEC LIMITE 2 AVIS MAX
 // ==========================================
+
 module.exports = (sequelize, DataTypes) => {
   const Review = sequelize.define('Review', {
     id: {
@@ -11,7 +12,6 @@ module.exports = (sequelize, DataTypes) => {
     orderId: {
       type: DataTypes.UUID,
       allowNull: false,
-      unique: true,
       references: {
         model: 'orders',
         key: 'id'
@@ -33,6 +33,20 @@ module.exports = (sequelize, DataTypes) => {
         key: 'id'
       }
     },
+    productId: {
+      type: DataTypes.UUID,
+      allowNull: true, // Null pour avis général
+      references: {
+        model: 'products',
+        key: 'id'
+      }
+    },
+    reviewType: {
+      type: DataTypes.ENUM('service', 'product'),
+      allowNull: false,
+      defaultValue: 'service',
+      comment: 'Type d\'avis: service global ou produit spécifique'
+    },
     rating: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -45,13 +59,35 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    isVerified: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true
+    sellerResponse: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    respondedAt: {
+      type: DataTypes.DATE,
+      allowNull: true
     }
   }, {
     tableName: 'reviews',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      // Index pour empêcher les doublons par type
+      {
+        unique: true,
+        fields: ['orderId', 'reviewType'],
+        name: 'unique_order_review_type'
+      },
+      // Index pour les recherches
+      {
+        fields: ['sellerId', 'createdAt']
+      },
+      {
+        fields: ['customerId', 'createdAt']
+      },
+      {
+        fields: ['productId']
+      }
+    ]
   });
 
   Review.associate = (models) => {
@@ -68,6 +104,11 @@ module.exports = (sequelize, DataTypes) => {
     Review.belongsTo(models.User, {
       foreignKey: 'sellerId',
       as: 'seller'
+    });
+
+    Review.belongsTo(models.Product, {
+      foreignKey: 'productId',
+      as: 'product'
     });
   };
 

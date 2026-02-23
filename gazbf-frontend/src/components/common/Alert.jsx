@@ -1,5 +1,6 @@
 // ==========================================
 // FICHIER: src/components/common/Alert.jsx
+// Alertes avec couleurs FasoGaz
 // ==========================================
 import React from 'react';
 import { CheckCircle2, AlertCircle, Info, XCircle, X } from 'lucide-react';
@@ -14,36 +15,36 @@ const Alert = ({
 }) => {
   const types = {
     success: {
-      bg: 'bg-green-50',
-      border: 'border-green-200',
+      bg: 'bg-accent-50',
+      border: 'border-accent-200',
       icon: CheckCircle2,
-      iconColor: 'text-green-600',
-      titleColor: 'text-green-800',
-      messageColor: 'text-green-700',
+      iconColor: 'text-accent-600',
+      titleColor: 'text-accent-900',
+      messageColor: 'text-accent-800',
     },
     error: {
       bg: 'bg-red-50',
       border: 'border-red-200',
       icon: XCircle,
       iconColor: 'text-red-600',
-      titleColor: 'text-red-800',
-      messageColor: 'text-red-700',
+      titleColor: 'text-red-900',
+      messageColor: 'text-red-800',
     },
     warning: {
-      bg: 'bg-yellow-50',
-      border: 'border-yellow-200',
+      bg: 'bg-secondary-50',
+      border: 'border-secondary-200',
       icon: AlertCircle,
-      iconColor: 'text-yellow-600',
-      titleColor: 'text-yellow-800',
-      messageColor: 'text-yellow-700',
+      iconColor: 'text-secondary-600',
+      titleColor: 'text-secondary-900',
+      messageColor: 'text-secondary-800',
     },
     info: {
-      bg: 'bg-blue-50',
-      border: 'border-blue-200',
+      bg: 'bg-primary-50',
+      border: 'border-primary-200',
       icon: Info,
-      iconColor: 'text-blue-600',
-      titleColor: 'text-blue-800',
-      messageColor: 'text-blue-700',
+      iconColor: 'text-primary-600',
+      titleColor: 'text-primary-900',
+      messageColor: 'text-primary-800',
     },
   };
 
@@ -52,7 +53,7 @@ const Alert = ({
 
   return (
     <div className={clsx(
-      'p-4 rounded-lg border',
+      'p-4 rounded-lg border-2',
       config.bg,
       config.border,
       className
@@ -63,7 +64,7 @@ const Alert = ({
         </div>
         <div className="ml-3 flex-1">
           {title && (
-            <h3 className={clsx('text-sm font-medium', config.titleColor)}>
+            <h3 className={clsx('text-sm font-bold', config.titleColor)}>
               {title}
             </h3>
           )}
@@ -78,9 +79,9 @@ const Alert = ({
             <button
               onClick={onClose}
               className={clsx(
-                'inline-flex rounded-md p-1.5 focus:outline-none focus:ring-2 focus:ring-offset-2',
+                'inline-flex rounded-md p-1.5 focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors',
                 config.iconColor,
-                'hover:bg-opacity-20 hover:bg-gray-900'
+                'hover:bg-opacity-20 hover:bg-neutral-900'
               )}
             >
               <X className="h-5 w-5" />

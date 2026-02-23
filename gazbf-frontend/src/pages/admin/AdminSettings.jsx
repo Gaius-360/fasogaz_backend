@@ -1,6 +1,5 @@
 // ==========================================
-// FICHIER: src/pages/admin/AdminSettings.jsx
-// Paramètres de l'administration
+// FICHIER: src/pages/admin/AdminSettings.jsx (CORRIGÉ)
 // ==========================================
 
 import React, { useState, useEffect } from 'react';
@@ -12,7 +11,11 @@ import {
   DollarSign,
   Clock,
   Shield,
-  Info
+  Info,
+  Users,
+  Store,
+  CheckCircle,
+  AlertCircle
 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Input from '../../components/common/Input';
@@ -21,13 +24,15 @@ import { api } from '../../api/apiSwitch';
 
 const AdminSettings = () => {
   const navigate = useNavigate();
+  
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('general');
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [alert, setAlert] = useState(null);
 
   const [generalSettings, setGeneralSettings] = useState({
-    platformName: 'GAZBF',
+    platformName: 'FasoGaz',
     version: '2.0',
     supportPhone: '',
     supportEmail: '',
@@ -35,45 +40,97 @@ const AdminSettings = () => {
     autoValidation: false
   });
 
-  const [pricing, setPricing] = useState({
-  client: {
-    weekly: '',
-    monthly: '',
-    quarterly: '',
-    yearly: '',
-    freeDays: 0
-  },
-  seller: {
-    weekly: '',
-    monthly: '',
-    quarterly: '',
-    yearly: '',
-    freeDays: 0
-  }
-});
+  const [clientConfig, setClientConfig] = useState({
+    isActive: false,
+    freeTrialDays: 0,
+    plans: {
+      weekly: { price: 0, duration: 7, enabled: false },
+      monthly: { price: 0, duration: 30, enabled: false },
+      quarterly: { price: 0, duration: 90, enabled: false },
+      yearly: { price: 0, duration: 365, enabled: false }
+    },
+    options: {
+      autoRenew: true,
+      gracePeriodDays: 3,
+      notifyBeforeExpiry: 7
+    }
+  });
 
+  const [revendeurConfig, setRevendeurConfig] = useState({
+    isActive: false,
+    freeTrialDays: 0,
+    plans: {
+      weekly: { price: 0, duration: 7, enabled: false },
+      monthly: { price: 0, duration: 30, enabled: false },
+      quarterly: { price: 0, duration: 90, enabled: false },
+      yearly: { price: 0, duration: 365, enabled: false }
+    },
+    options: {
+      autoRenew: true,
+      gracePeriodDays: 3,
+      notifyBeforeExpiry: 7
+    }
+  });
 
   useEffect(() => {
     loadSettings();
   }, []);
 
   const loadSettings = async () => {
+    setLoading(true);
     try {
-      const [settingsRes, pricingRes] = await Promise.all([
-        api.admin.settings.get(),
-        api.admin.settings.getPricing()
-      ]);
+      // Charger les paramètres généraux
+      const settingsResponse = await api.admin.settings.get();
+      if (settingsResponse?.success) {
+        setGeneralSettings(settingsResponse.data);
+      }
 
-      if (settingsRes.success) {
-        setGeneralSettings(settingsRes.data);
+      // Charger la tarification
+      const pricingResponse = await api.admin.settings.getPricing();
+      if (pricingResponse?.success) {
+        const { client, revendeur } = pricingResponse.data;
+        
+        if (client) {
+          setClientConfig({
+            isActive: client.isActive || false,
+            freeTrialDays: client.freeTrialDays || 0,
+            plans: client.plans || {
+              weekly: { price: 0, duration: 7, enabled: false },
+              monthly: { price: 0, duration: 30, enabled: false },
+              quarterly: { price: 0, duration: 90, enabled: false },
+              yearly: { price: 0, duration: 365, enabled: false }
+            },
+            options: client.options || {
+              autoRenew: true,
+              gracePeriodDays: 3,
+              notifyBeforeExpiry: 7
+            }
+          });
+        }
+
+        if (revendeur) {
+          setRevendeurConfig({
+            isActive: revendeur.isActive || false,
+            freeTrialDays: revendeur.freeTrialDays || 0,
+            plans: revendeur.plans || {
+              weekly: { price: 0, duration: 7, enabled: false },
+              monthly: { price: 0, duration: 30, enabled: false },
+              quarterly: { price: 0, duration: 90, enabled: false },
+              yearly: { price: 0, duration: 365, enabled: false }
+            },
+            options: revendeur.options || {
+              autoRenew: true,
+              gracePeriodDays: 3,
+              notifyBeforeExpiry: 7
+            }
+          });
+        }
       }
-      if (pricingRes.success) {
-        setPricing(pricingRes.data);
-      }
-    } catch (error) {
+    } catch (err) {
+      console.error('Erreur chargement:', err);
       setAlert({
         type: 'error',
-        message: 'Erreur lors du chargement'
+        message: err.message || 'Erreur lors du chargement'
       });
     } finally {
       setLoading(false);
@@ -88,64 +145,130 @@ const AdminSettings = () => {
     }));
   };
 
-  const handlePricingChange = (category, plan, value) => {
-    setPricing(prev => ({
-      ...prev,
-      [category]: {
-        ...prev[category],
-        [plan]: parseFloat(value) || 0
-      }
-    }));
-  };
-
   const handleSaveGeneral = async () => {
     setSaving(true);
     try {
       const response = await api.admin.settings.update(generalSettings);
-      if (response.success) {
+      if (response?.success) {
         setAlert({
           type: 'success',
-          message: 'Paramètres généraux mis à jour'
+          message: 'Paramètres généraux mis à jour avec succès'
         });
       }
-    } catch (error) {
+    } catch (err) {
+      console.error('Erreur sauvegarde:', err);
       setAlert({
         type: 'error',
-        message: 'Erreur lors de la mise à jour'
+        message: err.message || 'Erreur lors de la mise à jour'
       });
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSavePricing = async () => {
+  const handleSaveClient = async () => {
     setSaving(true);
     try {
-      const response = await api.admin.settings.updatePricing(pricing);
-      if (response.success) {
+      // ✅ STRUCTURE CORRIGÉE
+      const response = await api.admin.settings.updatePricing({
+        targetRole: 'client',
+        config: {
+          isActive: clientConfig.isActive,
+          freeTrialDays: parseInt(clientConfig.freeTrialDays) || 0,
+          plans: clientConfig.plans,
+          options: clientConfig.options
+        }
+      });
+
+      if (response?.success) {
         setAlert({
           type: 'success',
-          message: 'Tarifs mis à jour'
+          message: 'Configuration client enregistrée avec succès'
         });
+        await loadSettings(); // Recharger
       }
-    } catch (error) {
+    } catch (err) {
+      console.error('Erreur sauvegarde client:', err);
       setAlert({
         type: 'error',
-        message: 'Erreur lors de la mise à jour'
+        message: err.message || 'Erreur lors de la sauvegarde'
       });
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveRevendeur = async () => {
+    setSaving(true);
+    try {
+      // ✅ STRUCTURE CORRIGÉE
+      const response = await api.admin.settings.updatePricing({
+        targetRole: 'revendeur',
+        config: {
+          isActive: revendeurConfig.isActive,
+          freeTrialDays: parseInt(revendeurConfig.freeTrialDays) || 0,
+          plans: revendeurConfig.plans,
+          options: revendeurConfig.options
+        }
+      });
+
+      if (response?.success) {
+        setAlert({
+          type: 'success',
+          message: 'Configuration revendeur enregistrée avec succès'
+        });
+        await loadSettings(); // Recharger
+      }
+    } catch (err) {
+      console.error('Erreur sauvegarde revendeur:', err);
+      setAlert({
+        type: 'error',
+        message: err.message || 'Erreur lors de la sauvegarde'
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateClientPlan = (planType, field, value) => {
+    setClientConfig(prev => ({
+      ...prev,
+      plans: {
+        ...prev.plans,
+        [planType]: {
+          ...prev.plans[planType],
+          [field]: field === 'enabled' ? value : parseFloat(value) || 0
+        }
+      }
+    }));
+  };
+
+  const updateRevendeurPlan = (planType, field, value) => {
+    setRevendeurConfig(prev => ({
+      ...prev,
+      plans: {
+        ...prev.plans,
+        [planType]: {
+          ...prev.plans[planType],
+          [field]: field === 'enabled' ? value : parseFloat(value) || 0
+        }
+      }
+    }));
+  };
+
+  const planLabels = {
+    weekly: 'Hebdomadaire',
+    monthly: 'Mensuel',
+    quarterly: 'Trimestriel',
+    yearly: 'Annuel'
   };
 
   const tabs = [
     { id: 'general', label: 'Général', icon: Settings },
-    { id: 'pricing', label: 'Tarification', icon: DollarSign },
-    { id: 'validation', label: 'Validation', icon: Clock },
     { id: 'security', label: 'Sécurité', icon: Shield }
   ];
 
-  if (loading) {
+  if (loading && !generalSettings.platformName) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -184,11 +307,16 @@ const AdminSettings = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {alert && (
+        
+        {/* Alertes */}
+        {(alert || error) && (
           <Alert
-            type={alert.type}
-            message={alert.message}
-            onClose={() => setAlert(null)}
+            type={alert?.type || 'error'}
+            message={alert?.message || error}
+            onClose={() => {
+              setAlert(null);
+              setError(null);
+            }}
             className="mb-6"
           />
         )}
@@ -219,6 +347,7 @@ const AdminSettings = () => {
 
           {/* Content */}
           <div className="col-span-12 lg:col-span-9">
+            
             {/* Général */}
             {activeTab === 'general' && (
               <div className="bg-white rounded-lg border p-6">
@@ -258,7 +387,7 @@ const AdminSettings = () => {
                     label="Email Support"
                     name="supportEmail"
                     type="email"
-                    placeholder="support@gazbf.bf"
+                    placeholder="support@fasogaz.bf"
                     value={generalSettings.supportEmail}
                     onChange={handleGeneralChange}
                     required
@@ -276,215 +405,7 @@ const AdminSettings = () => {
               </div>
             )}
 
-            {/* Tarification */}
-{activeTab === 'pricing' && (
-  <div className="space-y-6">
-
-    {/* ================= CLIENTS ================= */}
-    <div className="bg-white rounded-lg border p-6">
-      <h2 className="text-xl font-bold text-gray-900 mb-6">
-        Abonnements Clients
-      </h2>
-
-      <div className="grid grid-cols-2 gap-4">
-        <Input
-          label="Semaine (FCFA)"
-          type="number"
-          value={pricing.client.weekly}
-          onChange={(e) =>
-            handlePricingChange('client', 'weekly', e.target.value)
-          }
-          min="0"
-        />
-
-        <Input
-          label="Mois (FCFA)"
-          type="number"
-          value={pricing.client.monthly}
-          onChange={(e) =>
-            handlePricingChange('client', 'monthly', e.target.value)
-          }
-          min="0"
-        />
-
-        <Input
-          label="Trimestre (FCFA)"
-          type="number"
-          value={pricing.client.quarterly}
-          onChange={(e) =>
-            handlePricingChange('client', 'quarterly', e.target.value)
-          }
-          min="0"
-        />
-
-        <Input
-          label="Année (FCFA)"
-          type="number"
-          value={pricing.client.yearly}
-          onChange={(e) =>
-            handlePricingChange('client', 'yearly', e.target.value)
-          }
-          min="0"
-        />
-      </div>
-
-      <div className="mt-4">
-        <Input
-          label="Jours gratuits pour nouveaux clients"
-          type="number"
-          value={pricing.client.freeDays}
-          onChange={(e) =>
-            handlePricingChange('client', 'freeDays', e.target.value)
-          }
-          min="0"
-          helpText="Ex: 7 = 7 jours gratuits à l’inscription"
-        />
-      </div>
-    </div>
-
-    {/* ================= REVENDEURS ================= */}
-    <div className="bg-white rounded-lg border p-6">
-      <h2 className="text-xl font-bold text-gray-900 mb-6">
-        Abonnements Revendeurs
-      </h2>
-
-      <div className="grid grid-cols-2 gap-4">
-        <Input
-          label="Semaine (FCFA)"
-          type="number"
-          value={pricing.seller.weekly}
-          onChange={(e) =>
-            handlePricingChange('seller', 'weekly', e.target.value)
-          }
-          min="0"
-        />
-
-        <Input
-          label="Mois (FCFA)"
-          type="number"
-          value={pricing.seller.monthly}
-          onChange={(e) =>
-            handlePricingChange('seller', 'monthly', e.target.value)
-          }
-          min="0"
-        />
-
-        <Input
-          label="Trimestre (FCFA)"
-          type="number"
-          value={pricing.seller.quarterly}
-          onChange={(e) =>
-            handlePricingChange('seller', 'quarterly', e.target.value)
-          }
-          min="0"
-        />
-
-        <Input
-          label="Année (FCFA)"
-          type="number"
-          value={pricing.seller.yearly}
-          onChange={(e) =>
-            handlePricingChange('seller', 'yearly', e.target.value)
-          }
-          min="0"
-        />
-      </div>
-
-      <div className="mt-4">
-        <Input
-          label="Jours gratuits pour nouveaux revendeurs"
-          type="number"
-          value={pricing.seller.freeDays}
-          onChange={(e) =>
-            handlePricingChange('seller', 'freeDays', e.target.value)
-          }
-          min="0"
-          helpText="Période d’essai gratuite pour les nouveaux revendeurs"
-        />
-      </div>
-    </div>
-
-    {/* ================= BOUTON SAVE ================= */}
-    <Button
-      variant="primary"
-      onClick={handleSavePricing}
-      loading={saving}
-    >
-      <Save className="h-5 w-5 mr-2" />
-      Enregistrer les Tarifs
-    </Button>
-  </div>
-)}
-            {/* Validation */}
-            {activeTab === 'validation' && (
-              <div className="bg-white rounded-lg border p-6">
-                <h2 className="text-xl font-bold text-gray-900 mb-6">
-                  Paramètres de Validation
-                </h2>
-
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Délai de traitement des demandes
-                    </label>
-                    <select
-                      name="validationDelay"
-                      value={generalSettings.validationDelay}
-                      onChange={handleGeneralChange}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    >
-                      <option value="24">24 heures</option>
-                      <option value="48">48 heures (recommandé)</option>
-                      <option value="72">72 heures</option>
-                    </select>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Délai maximum pour traiter une demande de revendeur
-                    </p>
-                  </div>
-
-                  <div className="flex items-start">
-                    <input
-                      type="checkbox"
-                      id="autoValidation"
-                      name="autoValidation"
-                      checked={generalSettings.autoValidation}
-                      onChange={handleGeneralChange}
-                      className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500 mt-1"
-                    />
-                    <label htmlFor="autoValidation" className="ml-3">
-                      <span className="text-sm font-medium text-gray-700">
-                        Validation automatique
-                      </span>
-                      <p className="text-xs text-gray-500">
-                        Valider automatiquement les profils complets après 24h
-                      </p>
-                    </label>
-                  </div>
-
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <Info className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                      <div className="text-sm text-blue-900">
-                        <p className="font-medium mb-1">Note importante</p>
-                        <p>
-                          La validation manuelle reste recommandée pour maintenir
-                          la qualité de la plateforme et éviter les profils frauduleux.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <Button
-                    variant="primary"
-                    onClick={handleSaveGeneral}
-                    loading={saving}
-                  >
-                    <Save className="h-5 w-5 mr-2" />
-                    Enregistrer
-                  </Button>
-                </div>
-              </div>
-            )}
+            
 
             {/* Sécurité */}
             {activeTab === 'security' && (
@@ -554,42 +475,7 @@ const AdminSettings = () => {
                         </label>
                       </div>
 
-                      <div className="flex items-start">
-                        <input
-                          type="checkbox"
-                          id="loginHistory"
-                          defaultChecked
-                          className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500 mt-1"
-                        />
-                        <label htmlFor="loginHistory" className="ml-3">
-                          <span className="text-sm font-medium text-gray-700">
-                            Historique des connexions
-                          </span>
-                          <p className="text-xs text-gray-500">
-                            Conserver un journal des connexions admin
-                          </p>
-                        </label>
-                      </div>
                     </div>
-                  </div>
-
-                  <div>
-                    <h3 className="font-semibold text-gray-900 mb-4">
-                      Sauvegarde des Données
-                    </h3>
-
-                    <div className="p-4 bg-gray-50 rounded-lg mb-4">
-                      <p className="text-sm text-gray-600 mb-2">
-                        <strong>Dernière sauvegarde:</strong> 10/12/2025 à 03:00
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        <strong>Fréquence:</strong> Quotidienne (automatique)
-                      </p>
-                    </div>
-
-                    <Button variant="outline">
-                      Effectuer une sauvegarde maintenant
-                    </Button>
                   </div>
                 </div>
               </div>

@@ -1,3 +1,8 @@
+// ==========================================
+// FICHIER: models/user.js (VERSION COMPLÈTE AVEC AGENTS)
+// Modèle User avec système d'accès 24h + Agents terrain
+// ==========================================
+
 const bcrypt = require('bcryptjs');
 
 module.exports = (sequelize, DataTypes) => {
@@ -12,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       unique: true,
       validate: {
-        is: /^\+226[0-9]{8}$/ // Format burkinabé
+        is: /^\+226[0-9]{8}$/
       }
     },
     password: {
@@ -31,11 +36,19 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING(150),
       allowNull: true,
       validate: {
-        isEmail: true
+        isEmail: { msg: 'Format email invalide' },
+        notEmpty: false
+      },
+      set(value) {
+        if (value === '' || value === null || value === undefined) {
+          this.setDataValue('email', null);
+        } else {
+          this.setDataValue('email', value);
+        }
       }
     },
     role: {
-      type: DataTypes.ENUM('client', 'revendeur', 'admin'),
+      type: DataTypes.ENUM('client', 'revendeur', 'admin', 'agent'),  // ← AJOUT 'agent'
       defaultValue: 'client',
       allowNull: false
     },
@@ -47,6 +60,14 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false
     },
+    otp: {
+      type: DataTypes.STRING(6),
+      allowNull: true
+    },
+    otpExpiry: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: true
@@ -55,7 +76,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.ENUM('Ouagadougou', 'Bobo-Dioulasso'),
       allowNull: true
     },
-    // Champs spécifiques revendeurs
+
+    // ==========================================
+    // CHAMPS REVENDEURS
+    // ==========================================
     businessName: {
       type: DataTypes.STRING(200),
       allowNull: true
@@ -90,8 +114,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     deliveryRadius: {
       type: DataTypes.INTEGER,
-      defaultValue: 0,
-      comment: 'Rayon de livraison en km'
+      defaultValue: 0
     },
     deliveryFee: {
       type: DataTypes.DECIMAL(10, 2),
@@ -112,7 +135,102 @@ module.exports = (sequelize, DataTypes) => {
     rejectionReason: {
       type: DataTypes.TEXT,
       allowNull: true
+    },
+    
+    // ==========================================
+    // SYSTÈME D'ACCÈS 24H (CLIENTS)
+    // ==========================================
+    lastAccessPurchaseDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Date du dernier achat d\'accès 24h'
+    },
+    accessExpiryDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Date d\'expiration de l\'accès actuel'
+    },
+    hasActiveAccess: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: 'A un accès actif (dans les 24h)'
+    },
+    totalAccessPurchases: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+      comment: 'Nombre total d\'achats d\'accès'
+    },
+
+    // ==========================================
+    // ABONNEMENT REVENDEURS
+    // ==========================================
+    freeTrialStartDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: '[REVENDEUR] Date début période essai'
+    },
+    freeTrialEndDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: '[REVENDEUR] Date fin période essai'
+    },
+    hasUsedFreeTrial: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: '[REVENDEUR] A utilisé la période gratuite'
+    },
+    subscriptionEndDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: '[REVENDEUR] Date fin abonnement payant'
+    },
+    hasActiveSubscription: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      comment: '[REVENDEUR] Abonnement payant actif'
+    },
+    gracePeriodEndDate: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: '[REVENDEUR] Date fin période de grâce'
+    },
+
+    // ==========================================
+    // ✅ NOUVEAUX CHAMPS AGENTS TERRAIN
+    // ==========================================
+    agentCode: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+      unique: true,
+      validate: {
+        is: {
+          args: /^AG-[A-Z0-9]{8}$/i,
+          msg: 'Format du code agent invalide (doit être AG-XXXXXXXX)'
+        }
+      },
+      comment: 'Code unique de l\'agent (format: AG-XXXXXXXX)'
+    },
+    
+    agentZone: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Zone d\'affectation de l\'agent (ex: Ouagadougou Centre)'
+    },
+    
+    isAgentActive: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: true,
+      allowNull: false,
+      comment: 'Statut actif/inactif de l\'agent terrain'
+    },
+    
+    agentStats: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null,
+      comment: 'Statistiques de l\'agent: { totalInvitationsSent, totalSellersRecruited, lastInvitationDate }'
     }
+
   }, {
     tableName: 'users',
     timestamps: true,
@@ -129,70 +247,149 @@ module.exports = (sequelize, DataTypes) => {
           user.password = await bcrypt.hash(user.password, salt);
         }
       }
-    }
+    },
+    // ✅ AJOUT D'INDEX POUR LES AGENTS
+    indexes: [
+      {
+        unique: true,
+        fields: ['phone']
+      },
+      {
+        unique: true,
+        fields: ['agentCode'],
+        name: 'idx_users_agentCode'
+      },
+      {
+        fields: ['role', 'isAgentActive'],
+        name: 'idx_users_role_agentActive'
+      }
+    ]
   });
 
-  // Méthode pour vérifier le mot de passe
+  // Méthode vérification mot de passe
   User.prototype.comparePassword = async function(candidatePassword) {
-    return await bcrypt.compare(candidatePassword, this.password);
+    try {
+      return await bcrypt.compare(candidatePassword, this.password);
+    } catch (error) {
+      console.error('❌ Erreur comparePassword:', error);
+      return false;
+    }
+  };
+
+  // Vérifier si l'accès est actif
+  User.prototype.hasValidAccess = function() {
+    if (this.role !== 'client') return true;
+    
+    if (!this.hasActiveAccess || !this.accessExpiryDate) {
+      return false;
+    }
+    
+    return new Date() < new Date(this.accessExpiryDate);
+  };
+
+  // Activer l'accès 24h
+  User.prototype.activateAccess = async function(durationHours = 24) {
+    const now = new Date();
+    const expiryDate = new Date(now.getTime() + durationHours * 60 * 60 * 1000);
+    
+    this.lastAccessPurchaseDate = now;
+    this.accessExpiryDate = expiryDate;
+    this.hasActiveAccess = true;
+    this.totalAccessPurchases = (this.totalAccessPurchases || 0) + 1;
+    
+    await this.save();
+    
+    return {
+      activatedAt: now,
+      expiresAt: expiryDate,
+      durationHours
+    };
+  };
+
+  // ✅ NOUVELLE MÉTHODE : Vérifier si c'est un agent actif
+  User.prototype.isActiveAgent = function() {
+    return this.role === 'agent' && this.isAgentActive && this.isActive;
+  };
+
+  // ✅ NOUVELLE MÉTHODE : Mettre à jour les stats agent
+  User.prototype.updateAgentStats = async function(updates) {
+    if (this.role !== 'agent') {
+      throw new Error('Cette méthode est réservée aux agents');
+    }
+    
+    const currentStats = this.agentStats || {
+      totalInvitationsSent: 0,
+      totalSellersRecruited: 0,
+      lastInvitationDate: null
+    };
+    
+    this.agentStats = {
+      ...currentStats,
+      ...updates
+    };
+    
+    await this.save();
+    return this.agentStats;
   };
 
   // Associations
   User.associate = (models) => {
-    // Un client peut avoir plusieurs adresses
     User.hasMany(models.Address, {
       foreignKey: 'userId',
       as: 'addresses'
     });
 
-    // Un revendeur peut avoir plusieurs produits
     User.hasMany(models.Product, {
       foreignKey: 'sellerId',
       as: 'products'
     });
 
-    // Un client peut avoir plusieurs commandes
     User.hasMany(models.Order, {
       foreignKey: 'customerId',
       as: 'ordersAsCustomer'
     });
 
-    // Un revendeur reçoit plusieurs commandes
     User.hasMany(models.Order, {
       foreignKey: 'sellerId',
       as: 'ordersAsSeller'
     });
 
-    // Abonnement
     User.hasOne(models.Subscription, {
       foreignKey: 'userId',
       as: 'subscription'
     });
 
-    // Avis reçus (pour revendeurs)
     User.hasMany(models.Review, {
       foreignKey: 'sellerId',
       as: 'reviewsReceived'
     });
 
-    // Avis donnés (pour clients)
     User.hasMany(models.Review, {
       foreignKey: 'customerId',
       as: 'reviewsGiven'
     });
 
-    // Transactions
     User.hasMany(models.Transaction, {
       foreignKey: 'userId',
       as: 'transactions'
     });
 
-    // Favoris
+    User.hasMany(models.AccessPurchase, {
+      foreignKey: 'userId',
+      as: 'accessPurchases'
+    });
+
     User.belongsToMany(models.User, {
       through: 'Favorites',
       as: 'favoriteSellers',
       foreignKey: 'customerId',
       otherKey: 'sellerId'
+    });
+
+    // ✅ NOUVELLE ASSOCIATION : Invitations générées par l'agent
+    User.hasMany(models.InvitationToken, {
+      foreignKey: 'generatedBy',
+      as: 'generatedInvitations'
     });
   };
 

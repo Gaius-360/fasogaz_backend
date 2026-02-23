@@ -2,7 +2,7 @@
 // FICHIER: src/components/seller/ProductFormModal.jsx
 // ==========================================
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Package } from 'lucide-react';
 import Button from '../common/Button';
 import Input from '../common/Input';
 import Alert from '../common/Alert';
@@ -14,8 +14,8 @@ const ProductFormModal = ({ product, onClose, onSuccess }) => {
 
   const [formData, setFormData] = useState({
     bottleType: product?.bottleType || '6kg',
-    brand: product?.brand || 'Shell Gas',
-    price: product?.price || '',
+    brand: product?.brand || 'Shell Gaz',
+    price: product?.price ? String(Math.round(product.price)) : '',
     quantity: product?.quantity || '',
     productImage: product?.productImage || ''
   });
@@ -30,9 +30,16 @@ const ProductFormModal = ({ product, onClose, onSuccess }) => {
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: null }));
   };
 
+  // ✅ Filtre strict : n'autorise que les chiffres 0-9, aucun séparateur possible
+  const handlePriceChange = (e) => {
+    const onlyDigits = e.target.value.replace(/[^0-9]/g, '');
+    setFormData(prev => ({ ...prev, price: onlyDigits }));
+    if (errors.price) setErrors(prev => ({ ...prev, price: null }));
+  };
+
   const validate = () => {
     const newErrors = {};
-    if (!formData.price || parseFloat(formData.price) <= 0) newErrors.price = 'Prix invalide';
+    if (!formData.price || parseInt(formData.price) <= 0) newErrors.price = 'Prix invalide';
     if (formData.quantity === '' || parseInt(formData.quantity) < 0) newErrors.quantity = 'Quantité invalide';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -48,7 +55,7 @@ const ProductFormModal = ({ product, onClose, onSuccess }) => {
     try {
       const productData = {
         ...formData,
-        price: parseFloat(formData.price),
+        price: parseInt(formData.price),
         quantity: parseInt(formData.quantity)
       };
 
@@ -57,7 +64,10 @@ const ProductFormModal = ({ product, onClose, onSuccess }) => {
         : await sellerService.createProduct(productData);
 
       if (response.success) {
-        setAlert({ type: 'success', message: isEdit ? 'Produit mis à jour' : 'Produit créé avec succès' });
+        setAlert({ 
+          type: 'success', 
+          message: isEdit ? 'Produit mis à jour' : 'Produit créé avec succès' 
+        });
         setTimeout(() => {
           onSuccess();
           onClose();
@@ -74,73 +84,109 @@ const ProductFormModal = ({ product, onClose, onSuccess }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col animate-scale-in">
         
         {/* Header */}
-        <div className="p-6 border-b flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-gray-900">
-            {isEdit ? 'Modifier le produit' : 'Nouveau produit'}
-          </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-            <X className="h-6 w-6" />
+        <div className="gradient-gazbf p-6">
+          <button 
+            onClick={onClose} 
+            className="absolute top-6 right-6 p-2 bg-white/20 hover:bg-white/30 backdrop-blur-sm rounded-full transition-colors text-white"
+          >
+            <X className="h-5 w-5" />
           </button>
+          <div className="text-white">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 bg-white/20 rounded-xl backdrop-blur-sm">
+                <Package className="h-6 w-6" />
+              </div>
+              <h2 className="text-2xl font-bold">
+                {isEdit ? 'Modifier le produit' : 'Nouveau produit'}
+              </h2>
+            </div>
+            <p className="text-white/90 text-sm">
+              {isEdit ? 'Mettez à jour les informations' : 'Ajoutez un produit à votre stock'}
+            </p>
+          </div>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {alert && <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} className="mb-4" />}
+          {alert && (
+            <Alert 
+              type={alert.type} 
+              message={alert.message} 
+              onClose={() => setAlert(null)} 
+              className="mb-4" 
+            />
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Bottle Type */}
+            {/* Type de bouteille */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Type de bouteille <span className="text-red-500">*</span>
+              <label className="block text-sm font-bold text-neutral-900 mb-2">
+                Type de bouteille <span className="text-primary-600">*</span>
               </label>
               <select
                 name="bottleType"
                 value={formData.bottleType}
                 onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary-500"
+                className="w-full px-4 py-3 border-2 border-neutral-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-primary-100 focus:border-primary-500 transition-all font-medium"
                 disabled={isEdit}
               >
-                {BOTTLE_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
+                {BOTTLE_TYPES.map(type => (
+                  <option key={type.value} value={type.value}>{type.label}</option>
+                ))}
               </select>
-              {isEdit && <p className="text-xs text-gray-500 mt-1">Le type ne peut pas être modifié</p>}
+              {isEdit && (
+                <p className="text-xs text-neutral-500 mt-2">⚠️ Le type ne peut pas être modifié</p>
+              )}
             </div>
 
-            {/* Brand */}
+            {/* Marque */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Marque <span className="text-red-500">*</span>
+              <label className="block text-sm font-bold text-neutral-900 mb-2">
+                Marque <span className="text-primary-600">*</span>
               </label>
               <select
                 name="brand"
                 value={formData.brand}
                 onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-secondary-500"
+                className="w-full px-4 py-3 border-2 border-neutral-200 rounded-xl focus:outline-none focus:ring-4 focus:ring-primary-100 focus:border-primary-500 transition-all font-medium"
                 disabled={isEdit}
               >
-                {BRANDS.map(brand => <option key={brand.value} value={brand.value}>{brand.label}</option>)}
+                {BRANDS.map(brand => (
+                  <option key={brand.value} value={brand.value}>{brand.label}</option>
+                ))}
               </select>
-              {isEdit && <p className="text-xs text-gray-500 mt-1">La marque ne peut pas être modifiée</p>}
+              {isEdit && (
+                <p className="text-xs text-neutral-500 mt-2">⚠️ La marque ne peut pas être modifiée</p>
+              )}
             </div>
 
-            {/* Price */}
-            <Input
-              label="Prix unitaire (FCFA)"
-              name="price"
-              type="number"
-              placeholder="6000"
-              value={formData.price}
-              onChange={handleChange}
-              error={errors.price}
-              min="0"
-              step="100"
-              required
-            />
+            {/* ✅ Prix — champ texte filtré, seuls les chiffres passent */}
+            <div>
+              <label className="block text-sm font-bold text-neutral-900 mb-2">
+                Prix unitaire (FCFA) <span className="text-primary-600">*</span>
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                name="price"
+                placeholder="6000"
+                value={formData.price}
+                onChange={handlePriceChange}
+                className={`w-full px-4 py-3 border-2 rounded-xl focus:outline-none focus:ring-4 focus:ring-primary-100 focus:border-primary-500 transition-all font-medium ${
+                  errors.price ? 'border-red-400' : 'border-neutral-200'
+                }`}
+              />
+              {errors.price && (
+                <p className="text-xs text-red-500 mt-1">{errors.price}</p>
+              )}
+            </div>
 
-            {/* Quantity */}
+            {/* Quantité */}
             <Input
               label="Quantité en stock"
               name="quantity"
@@ -153,25 +199,22 @@ const ProductFormModal = ({ product, onClose, onSuccess }) => {
               required
               helpText="Statut automatique: >5 = Disponible, 1-5 = Limité, 0 = Rupture"
             />
-
-            {/* Product Image */}
-            <Input
-              label="URL de l'image (optionnel)"
-              name="productImage"
-              type="url"
-              placeholder="https://exemple.com/image.jpg"
-              value={formData.productImage}
-              onChange={handleChange}
-              helpText="URL d'une image du produit"
-            />
           </form>
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t bg-gray-50">
+        <div className="p-6 border-t-2 border-neutral-100 bg-neutral-50">
           <div className="flex gap-3">
-            <Button variant="outline" onClick={onClose}>Annuler</Button>
-            <Button variant="primary" fullWidth loading={loading} onClick={handleSubmit}>
+            <Button variant="outline" onClick={onClose} disabled={loading}>
+              Annuler
+            </Button>
+            <Button 
+              variant="gradient" 
+              fullWidth 
+              loading={loading} 
+              onClick={handleSubmit}
+              className="h-12 text-base font-bold shadow-gazbf-lg"
+            >
               {isEdit ? 'Mettre à jour' : 'Créer le produit'}
             </Button>
           </div>

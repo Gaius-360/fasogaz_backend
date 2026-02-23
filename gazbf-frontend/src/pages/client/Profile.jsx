@@ -81,7 +81,7 @@ const ProfileComplete = () => {
       icon: Star,
       label: 'Mes avis',
       description: 'Avis que j\'ai laissés',
-      onClick: () => navigate('/client/reviews')
+      onClick: () => navigate('/client/my-reviews')
     }
   ];
 
@@ -164,13 +164,7 @@ const ProfileComplete = () => {
                     placeholder="Nom"
                   />
                 </div>
-                <Input
-                  name="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  placeholder="Email (optionnel)"
-                />
+                
               </div>
             )}
           </div>
@@ -193,14 +187,17 @@ const ProfileComplete = () => {
           </div>
           
           <div className="p-4 bg-gray-50 rounded-lg">
-            <p className="text-sm text-gray-600 mb-1">Statut</p>
-            <span className={`inline-flex px-2 py-1 rounded text-sm font-medium ${
-              user?.isVerified 
-                ? 'bg-green-100 text-green-800' 
-                : 'bg-yellow-100 text-yellow-800'
-            }`}>
-              {user?.isVerified ? '✓ Vérifié' : '⏳ Non vérifié'}
-            </span>
+            <p className="text-sm text-gray-600 mb-1">Inscription</p>
+            <p className="font-medium">
+              {user?.createdAt 
+                ? new Date(user.createdAt).toLocaleDateString('fr-FR', {
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric'
+                  })
+                : 'N/A'
+              }
+            </p>
           </div>
         </div>
       </Card>
@@ -249,10 +246,6 @@ const ProfileComplete = () => {
           </Button>
         </div>
       </Card>
-
-      <p className="text-center text-sm text-gray-500">
-        GAZBF v2.0 - © 2025
-      </p>
     </div>
   );
 };

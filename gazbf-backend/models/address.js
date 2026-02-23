@@ -1,6 +1,8 @@
 // ==========================================
 // FICHIER: models/address.js
+// Modèle d'adresse sans champ quartier
 // ==========================================
+
 module.exports = (sequelize, DataTypes) => {
   const Address = sequelize.define('Address', {
     id: {
@@ -19,27 +21,35 @@ module.exports = (sequelize, DataTypes) => {
     label: {
       type: DataTypes.STRING(100),
       allowNull: false,
-      comment: 'Maison, Bureau, etc.'
+      comment: 'Ex: Maison, Bureau, Autre'
+    },
+    fullAddress: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      comment: 'Adresse complète générée automatiquement'
     },
     city: {
       type: DataTypes.ENUM('Ouagadougou', 'Bobo-Dioulasso'),
       allowNull: false
     },
-    quarter: {
-      type: DataTypes.STRING(100),
-      allowNull: false
-    },
-    fullAddress: {
-      type: DataTypes.TEXT,
-      allowNull: false
-    },
     latitude: {
       type: DataTypes.DECIMAL(10, 8),
-      allowNull: true
+      allowNull: false,
+      comment: 'Coordonnée GPS obligatoire'
     },
     longitude: {
       type: DataTypes.DECIMAL(11, 8),
+      allowNull: false,
+      comment: 'Coordonnée GPS obligatoire'
+    },
+    phoneNumber: {
+      type: DataTypes.STRING(20),
       allowNull: true
+    },
+    additionalInfo: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      comment: 'Indications supplémentaires (point de repère, instructions)'
     },
     isDefault: {
       type: DataTypes.BOOLEAN,

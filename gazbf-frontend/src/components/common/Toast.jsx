@@ -1,6 +1,6 @@
-
 // ==========================================
 // FICHIER: src/components/common/Toast.jsx
+// Notifications toast avec couleurs FasoGaz
 // ==========================================
 import React, { useEffect } from 'react';
 import { X, CheckCircle, AlertCircle, Info, XCircle } from 'lucide-react';
@@ -16,11 +16,11 @@ const Toast = ({ id, type = 'info', message, duration = 5000, onClose }) => {
 
   const types = {
     success: {
-      bg: 'bg-green-50',
-      border: 'border-green-500',
+      bg: 'bg-accent-50',
+      border: 'border-accent-500',
       icon: CheckCircle,
-      iconColor: 'text-green-600',
-      textColor: 'text-green-900'
+      iconColor: 'text-accent-600',
+      textColor: 'text-accent-900'
     },
     error: {
       bg: 'bg-red-50',
@@ -30,18 +30,18 @@ const Toast = ({ id, type = 'info', message, duration = 5000, onClose }) => {
       textColor: 'text-red-900'
     },
     warning: {
-      bg: 'bg-yellow-50',
-      border: 'border-yellow-500',
+      bg: 'bg-secondary-50',
+      border: 'border-secondary-500',
       icon: AlertCircle,
-      iconColor: 'text-yellow-600',
-      textColor: 'text-yellow-900'
+      iconColor: 'text-secondary-600',
+      textColor: 'text-secondary-900'
     },
     info: {
-      bg: 'bg-blue-50',
-      border: 'border-blue-500',
+      bg: 'bg-primary-50',
+      border: 'border-primary-500',
       icon: Info,
-      iconColor: 'text-blue-600',
-      textColor: 'text-blue-900'
+      iconColor: 'text-primary-600',
+      textColor: 'text-primary-900'
     }
   };
 
@@ -54,7 +54,7 @@ const Toast = ({ id, type = 'info', message, duration = 5000, onClose }) => {
     >
       <div className="flex items-start gap-3">
         <Icon className={`h-5 w-5 ${config.iconColor} flex-shrink-0 mt-0.5`} />
-        <p className={`flex-1 text-sm ${config.textColor}`}>{message}</p>
+        <p className={`flex-1 text-sm font-medium ${config.textColor}`}>{message}</p>
         <button
           onClick={() => onClose(id)}
           className={`${config.iconColor} hover:opacity-70 transition-opacity`}

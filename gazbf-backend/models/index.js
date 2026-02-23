@@ -1,12 +1,16 @@
 // ==========================================
-// FICHIER: models/index.js (COMPLET)
+// FICHIER: models/index.js
+// Index des modèles avec associations
 // ==========================================
-const { Sequelize } = require('sequelize');
+
+const { Sequelize, DataTypes } = require('sequelize');
 const config = require('../config/database');
+const adminWithdrawal = require('./adminWithdrawal');
 
 const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
 
+// Initialiser Sequelize
 const sequelize = new Sequelize(
   dbConfig.database,
   dbConfig.username,
@@ -20,28 +24,32 @@ const sequelize = new Sequelize(
   }
 );
 
-const db = {};
-
 // Importer tous les modèles
-db.User = require('./user')(sequelize, Sequelize.DataTypes);
-db.Address = require('./address')(sequelize, Sequelize.DataTypes);
-db.Product = require('./product')(sequelize, Sequelize.DataTypes);
-db.Order = require('./order')(sequelize, Sequelize.DataTypes);
-db.OrderItem = require('./orderItem')(sequelize, Sequelize.DataTypes);
-db.Subscription = require('./subscription')(sequelize, Sequelize.DataTypes);
-db.Transaction = require('./transaction')(sequelize, Sequelize.DataTypes);
-db.Review = require('./review')(sequelize, Sequelize.DataTypes);
-db.Promotion = require('./promotion')(sequelize, Sequelize.DataTypes);
-db.Favorite = require('./favorite')(sequelize, Sequelize.DataTypes);
+const db = {
+  sequelize,
+  Sequelize,
+  User: require('./user')(sequelize, DataTypes),
+  Product: require('./product')(sequelize, DataTypes),
+  Order: require('./order')(sequelize, DataTypes),
+  OrderItem: require('./orderItem')(sequelize, DataTypes),
+  Address: require('./address')(sequelize, DataTypes),
+  Subscription: require('./subscription')(sequelize, DataTypes),
+  Review: require('./review')(sequelize, DataTypes),
+  Transaction: require('./transaction')(sequelize, DataTypes),
+  Notification: require('./notification')(sequelize, DataTypes),
+  Pricing: require('./pricing')(sequelize, DataTypes),
+  SystemSettings: require('./SystemSettings')(sequelize, DataTypes),
+  AccessPurchase: require('./accessPurchase')(sequelize, DataTypes),
+  InvitationToken: require('./invitationToken')(sequelize, DataTypes),
+  AdminWithdrawal: require('./adminWithdrawal')(sequelize, DataTypes),
+  PushSubscription: require('./pushSubscription')(sequelize, DataTypes)
+};
 
-// Établir toutes les associations
+// Configurer les associations
 Object.keys(db).forEach(modelName => {
   if (db[modelName].associate) {
     db[modelName].associate(db);
   }
 });
-
-db.Sequelize = Sequelize;
-db.sequelize = sequelize;
 
 module.exports = db;

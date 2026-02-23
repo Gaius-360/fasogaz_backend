@@ -1,5 +1,5 @@
 // ==========================================
-// FICHIER: models/order.js
+// FICHIER: models/order.js - VERSION AVEC EXPIRATION
 // ==========================================
 module.exports = (sequelize, DataTypes) => {
   const Order = sequelize.define('Order', {
@@ -54,7 +54,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     status: {
-      type: DataTypes.ENUM('pending', 'accepted', 'preparing', 'in_delivery', 'completed', 'cancelled', 'rejected'),
+      type: DataTypes.ENUM('pending', 'accepted', 'in_delivery', 'completed', 'cancelled', 'rejected', 'expired'),
       defaultValue: 'pending'
     },
     customerNote: {
@@ -70,6 +70,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       comment: 'Temps estimé en minutes'
     },
+    expiresAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Date et heure d\'expiration de la commande (24h après création)'
+    },
     acceptedAt: {
       type: DataTypes.DATE,
       allowNull: true
@@ -82,11 +87,20 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'orders',
     timestamps: true,
     hooks: {
-      beforeCreate: async (order) => {
-        // Générer un numéro de commande unique
-        const timestamp = Date.now();
-        const random = Math.floor(Math.random() * 1000);
-        order.orderNumber = `CMD${timestamp}${random}`;
+      beforeValidate: async (order) => {
+        if (!order.orderNumber) {
+          // Générer un numéro de commande unique
+          const timestamp = Date.now();
+          const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+          order.orderNumber = `CMD${timestamp}${random}`;
+        }
+
+        // ✅ NOUVEAU : Définir la date d'expiration (24h après création)
+        if (!order.expiresAt && order.isNewRecord) {
+          const expirationDate = new Date();
+          expirationDate.setHours(expirationDate.getHours() + 24);
+          order.expiresAt = expirationDate;
+        }
       }
     }
   });

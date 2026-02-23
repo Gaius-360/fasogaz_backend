@@ -1,0 +1,21 @@
+# robots.txt – FasoGaz
+# https://fasogaz.com
+
+User-agent: *
+
+# Pages publiques indexables
+Allow: /$
+Allow: /register
+Allow: /login
+Allow: /devenir-revendeur
+
+# Espaces privés – Ne pas indexer
+Disallow: /client/
+Disallow: /seller/
+Disallow: /admin/
+Disallow: /agent/
+Disallow: /secure/
+Disallow: /register-revendeur
+
+# Sitemap
+Sitemap: https://fasogaz.com/sitemap.xml

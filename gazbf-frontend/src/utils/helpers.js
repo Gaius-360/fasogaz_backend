@@ -1,7 +1,11 @@
+// ==========================================
+// FICHIER: src/utils/helpers.js
+// ✅ FIX: Importer userApi
+// ==========================================
 
-// ==========================================
-// FICHIER 1: src/utils/helpers.js (VERSION COMPLÈTE)
-// ==========================================
+import { correctQuarterName, cleanAndValidateQuarterName } from '../data/quarterNameCorrections.js';
+// ✅ AJOUT: Importer userApi
+import userApi from '../api/apiSwitch';
 
 /**
  * Formate un nombre en prix FCFA
@@ -89,34 +93,166 @@ export const formatRelativeTime = (dateString) => {
 };
 
 /**
- * Obtenir la position géographique actuelle
+ * ✅ GÉOCODAGE INVERSÉ via backend (évite CORS)
  */
-export const getCurrentPosition = () => {
+export const reverseGeocode = async (latitude, longitude) => {
+  try {
+    console.log(`📍 Géocodage inversé via backend: ${latitude}, ${longitude}`);
+
+    // ✅ Appeler le backend au lieu de Nominatim directement
+    const response = await userApi.get('/geocoding/multi-zoom', {
+      params: { lat: latitude, lon: longitude }
+    });
+
+    if (!response.success || !response.data) {
+      console.warn('⚠️ Aucune donnée de géocodage');
+      return {
+        success: true,
+        quarter: null,
+        city: 'Ouagadougou',
+        fullAddress: 'Ouagadougou',
+        source: 'backend',
+        warning: 'Aucun quartier trouvé'
+      };
+    }
+
+    const data = response.data;
+    const address = data.address || {};
+
+    // ✅ Extraire et corriger le quartier
+    const rawQuarter = 
+      address.suburb ||
+      address.neighbourhood ||
+      address.hamlet ||
+      address.quarter ||
+      address.city_district ||
+      address.residential ||
+      null;
+
+    const quarter = rawQuarter ? cleanAndValidateQuarterName(rawQuarter) : null;
+
+    if (quarter && rawQuarter !== quarter) {
+      console.log(`🔧 Quartier corrigé: "${rawQuarter}" → "${quarter}"`);
+    }
+
+    // Extraire la ville
+    const city = 
+      address.city || 
+      address.town || 
+      address.village || 
+      address.municipality ||
+      'Ouagadougou';
+
+    console.log('✅ Géocodage réussi:', {
+      quarter,
+      city,
+      zoom: data.zoom,
+      source: 'backend'
+    });
+
+    return {
+      success: true,
+      quarter,
+      city,
+      fullAddress: data.display_name || `${quarter || ''}, ${city}`.trim(),
+      details: {
+        road: address.road || '',
+        suburb: address.suburb || '',
+        neighbourhood: address.neighbourhood || '',
+        city_district: address.city_district || '',
+        postcode: address.postcode || '',
+        country: address.country || 'Burkina Faso',
+        zoom: data.zoom
+      },
+      raw: address,
+      source: 'backend'
+    };
+
+  } catch (error) {
+    console.error('❌ Erreur géocodage backend:', error);
+    
+    return {
+      success: false,
+      error: error.message,
+      quarter: null,
+      city: null,
+      source: 'error'
+    };
+  }
+};
+
+/**
+ * ✅ OBTENIR LA POSITION GÉOGRAPHIQUE ACTUELLE
+ */
+export const getCurrentPosition = async () => {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error('La géolocalisation n\'est pas supportée'));
+      reject(new Error('La géolocalisation n\'est pas supportée par votre navigateur'));
       return;
     }
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude
-        });
+      async (position) => {
+        const latitude = position.coords.latitude;
+        const longitude = position.coords.longitude;
+        
+        console.log('📍 Position GPS obtenue:', { latitude, longitude });
+
+        try {
+          // ✅ Utiliser le backend pour le géocodage
+          const locationData = await reverseGeocode(latitude, longitude);
+          
+          if (locationData.success) {
+            resolve({
+              latitude,
+              longitude,
+              accuracy: position.coords.accuracy,
+              quarter: locationData.quarter,
+              city: locationData.city,
+              fullAddress: locationData.fullAddress,
+              details: locationData.details,
+              source: 'backend',
+              warning: locationData.warning || null
+            });
+          } else {
+            console.error('❌ Échec géocodage backend');
+            resolve({
+              latitude,
+              longitude,
+              accuracy: position.coords.accuracy,
+              quarter: null,
+              city: null,
+              geocodingError: locationData.error || 'Erreur de géocodage',
+              source: 'error'
+            });
+          }
+
+        } catch (geocodeError) {
+          console.error('❌ Erreur géocodage:', geocodeError);
+          
+          resolve({
+            latitude,
+            longitude,
+            accuracy: position.coords.accuracy,
+            quarter: null,
+            city: null,
+            geocodingError: geocodeError.message,
+            source: 'error'
+          });
+        }
       },
       (error) => {
         let message = 'Impossible d\'obtenir votre position';
         
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            message = 'Vous avez refusé l\'accès à votre position';
+            message = 'Vous avez refusé l\'accès à votre position. Veuillez activer la géolocalisation dans les paramètres de votre navigateur.';
             break;
           case error.POSITION_UNAVAILABLE:
             message = 'Position non disponible';
             break;
           case error.TIMEOUT:
-            message = 'La demande a expiré';
+            message = 'La demande a expiré. Veuillez réessayer.';
             break;
         }
         
@@ -135,31 +271,23 @@ export const getCurrentPosition = () => {
  * Ouvre l'application de navigation vers un lieu
  */
 export const openNavigationToLocation = (latitude, longitude, placeName, userLocation = null) => {
-  // Détecter le système d'exploitation
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const isAndroid = /Android/.test(navigator.userAgent);
   
   let navigationUrl;
   
   if (userLocation && userLocation.latitude && userLocation.longitude) {
-    // Si on a la position de l'utilisateur, créer un itinéraire
     if (isIOS) {
-      // Apple Plans avec itinéraire
       navigationUrl = `http://maps.apple.com/?saddr=${userLocation.latitude},${userLocation.longitude}&daddr=${latitude},${longitude}&dirflg=d`;
     } else if (isAndroid) {
-      // Google Maps avec itinéraire
       navigationUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.latitude},${userLocation.longitude}&destination=${latitude},${longitude}&travelmode=driving`;
     } else {
-      // Desktop: Google Maps
       navigationUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.latitude},${userLocation.longitude}&destination=${latitude},${longitude}&travelmode=driving`;
     }
   } else {
-    // Sinon, juste montrer la destination
     if (isIOS) {
-      // Apple Plans
       navigationUrl = `http://maps.apple.com/?q=${encodeURIComponent(placeName)}&ll=${latitude},${longitude}`;
     } else {
-      // Google Maps
       navigationUrl = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
     }
   }
@@ -171,7 +299,6 @@ export const openNavigationToLocation = (latitude, longitude, placeName, userLoc
     hasUserLocation: !!userLocation
   });
   
-  // Ouvrir l'URL
   window.open(navigationUrl, '_blank');
 };
 
@@ -179,7 +306,7 @@ export const openNavigationToLocation = (latitude, longitude, placeName, userLoc
  * Calculer la distance entre deux points GPS (en km)
  */
 export const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371; // Rayon de la Terre en km
+  const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   
@@ -191,7 +318,7 @@ export const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const distance = R * c;
   
-  return Math.round(distance * 10) / 10; // Arrondi à 1 décimale
+  return Math.round(distance * 10) / 10;
 };
 
 const toRad = (value) => {
@@ -220,7 +347,6 @@ export const getInitials = (firstName, lastName) => {
  * Valider un numéro de téléphone burkinabè
  */
 export const isValidPhoneNumber = (phone) => {
-  // Format: +226XXXXXXXX ou 226XXXXXXXX ou 0XXXXXXXX
   const regex = /^(\+?226|0)?[567]\d{7}$/;
   return regex.test(phone.replace(/\s/g, ''));
 };
@@ -231,15 +357,12 @@ export const isValidPhoneNumber = (phone) => {
 export const formatPhoneNumber = (phone) => {
   if (!phone) return '';
   
-  // Enlever tous les espaces et caractères spéciaux
   const cleaned = phone.replace(/\D/g, '');
   
-  // Si commence par 226, ajouter +
   if (cleaned.startsWith('226')) {
     return '+' + cleaned;
   }
   
-  // Si commence par 0, remplacer par +226
   if (cleaned.startsWith('0')) {
     return '+226' + cleaned.substring(1);
   }
@@ -326,3 +449,6 @@ export const getErrorMessage = (error) => {
   
   return 'Une erreur est survenue';
 };
+
+// ✅ EXPORT: Fonctions de correction pour utilisation externe
+export { correctQuarterName, cleanAndValidateQuarterName } from '../data/quarterNameCorrections.js';

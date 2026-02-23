@@ -1,24 +1,61 @@
 // ==========================================
-// FICHIER: routes/reviewRoutes.js
+// FICHIER: routes/reviewRoutes.js (VERSION AVEC CONTRÔLE D'ACCÈS)
 // ==========================================
 const express = require('express');
 const router = express.Router();
 const reviewController = require('../controllers/reviewController');
-const { protect, authorize } = require('../middleware/auth');
+const { 
+  protect, 
+  authorize, 
+  checkSellerAccess 
+} = require('../middleware/auth');
 
-// Routes publiques
-router.get('/seller/:sellerId', reviewController.getSellerReviews);
+// ==========================================
+// ROUTES PUBLIQUES
+// ==========================================
+router.get(
+  '/seller/:sellerId',
+  reviewController.getSellerReviews
+);
 
-// Routes protégées - Client
-router.post('/', protect, authorize('client'), reviewController.createReview);
-router.get('/my-reviews', protect, authorize('client'), reviewController.getMyReviews);
-router.put('/:id', protect, authorize('client'), reviewController.updateReview);
-router.delete('/:id', protect, reviewController.deleteReview);
+// ==========================================
+// ROUTES PROTÉGÉES - CLIENT
+// ==========================================
+router.post(
+  '/',
+  protect,
+  authorize('client'),
+  reviewController.createReview
+);
 
-// Routes protégées - Revendeur
-router.get('/received', protect, authorize('revendeur'), reviewController.getReceivedReviews);
+router.get(
+  '/my-reviews',
+  protect,
+  authorize('client'),
+  reviewController.getMyReviews
+);
 
-// Routes communes
-router.post('/:id/report', protect, reviewController.reportReview);
+// ==========================================
+// ROUTES PROTÉGÉES - REVENDEUR
+// (Nécessitent abonnement actif)
+// ==========================================
+
+// Obtenir les avis reçus - Nécessite abonnement actif
+router.get(
+  '/received',
+  protect,
+  authorize('revendeur'),
+  checkSellerAccess, // ✅ NOUVEAU : Vérifier l'abonnement actif
+  reviewController.getReceivedReviews
+);
+
+// Répondre à un avis - Nécessite abonnement actif
+router.put(
+  '/:id/respond',
+  protect,
+  authorize('revendeur'),
+  checkSellerAccess, // ✅ NOUVEAU : Vérifier l'abonnement actif
+  reviewController.respondToReview
+);
 
 module.exports = router;

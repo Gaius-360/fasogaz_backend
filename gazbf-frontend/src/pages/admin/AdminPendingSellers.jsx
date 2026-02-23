@@ -1,6 +1,6 @@
 // ==========================================
 // FICHIER: src/pages/admin/AdminPendingSellers.jsx
-// Validation des demandes de revendeurs
+// VERSION SYNCHRONISÉE avec useAdmin hook
 // ==========================================
 
 import React, { useState, useEffect } from 'react';
@@ -12,18 +12,27 @@ import {
   MapPin,
   Phone,
   Calendar,
-  ArrowLeft,
-  MessageSquare
+  ArrowLeft
 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Alert from '../../components/common/Alert';
-import { api } from '../../api/apiSwitch';
 import { formatDateTime } from '../../utils/helpers';
+import useAdmin from '../../hooks/useAdmin';
 
 const AdminPendingSellers = () => {
   const navigate = useNavigate();
+  
+  // ✅ Utilisation du hook
+  const {
+    loading,
+    error,
+    clearError,
+    getPendingSellers,
+    validateSeller,
+    rejectSeller
+  } = useAdmin();
+
   const [pendingSellers, setPendingSellers] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [alert, setAlert] = useState(null);
   const [selectedSeller, setSelectedSeller] = useState(null);
   const [actionType, setActionType] = useState(null);
@@ -35,17 +44,15 @@ const AdminPendingSellers = () => {
 
   const loadPendingSellers = async () => {
     try {
-      const response = await api.admin.sellers.getPending();
-      if (response.success) {
+      const response = await getPendingSellers();
+      if (response?.success) {
         setPendingSellers(response.data);
       }
-    } catch (error) {
+    } catch (err) {
       setAlert({
         type: 'error',
-        message: 'Erreur lors du chargement'
+        message: err.message || 'Erreur lors du chargement'
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -67,16 +74,16 @@ const AdminPendingSellers = () => {
     try {
       let response;
       if (actionType === 'validate') {
-        response = await api.admin.sellers.validate(selectedSeller.id, message);
+        response = await validateSeller(selectedSeller.id, message);
       } else if (actionType === 'reject') {
         if (!message.trim()) {
           setAlert({ type: 'error', message: 'Veuillez indiquer une raison' });
           return;
         }
-        response = await api.admin.sellers.reject(selectedSeller.id, 'autre', message);
+        response = await rejectSeller(selectedSeller.id, 'autre', message);
       }
 
-      if (response.success) {
+      if (response?.success) {
         setAlert({
           type: 'success',
           message: actionType === 'validate' ? 'Revendeur validé' : 'Demande rejetée'
@@ -86,10 +93,10 @@ const AdminPendingSellers = () => {
         setMessage('');
         loadPendingSellers();
       }
-    } catch (error) {
+    } catch (err) {
       setAlert({
         type: 'error',
-        message: 'Erreur lors de l\'opération'
+        message: err.message || 'Erreur lors de l\'opération'
       });
     }
   };
@@ -99,7 +106,7 @@ const AdminPendingSellers = () => {
     return days;
   };
 
-  if (loading) {
+  if (loading && !pendingSellers.length) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -140,11 +147,16 @@ const AdminPendingSellers = () => {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {alert && (
+        
+        {/* Alertes */}
+        {(alert || error) && (
           <Alert
-            type={alert.type}
-            message={alert.message}
-            onClose={() => setAlert(null)}
+            type={alert?.type || 'error'}
+            message={alert?.message || error}
+            onClose={() => {
+              setAlert(null);
+              clearError();
+            }}
             className="mb-6"
           />
         )}
@@ -216,6 +228,7 @@ const AdminPendingSellers = () => {
                     variant="primary"
                     onClick={() => handleValidate(seller)}
                     className="flex-1"
+                    disabled={loading}
                   >
                     <CheckCircle className="h-5 w-5 mr-2" />
                     Valider
@@ -224,6 +237,7 @@ const AdminPendingSellers = () => {
                     variant="danger"
                     onClick={() => handleReject(seller)}
                     className="flex-1"
+                    disabled={loading}
                   >
                     <XCircle className="h-5 w-5 mr-2" />
                     Rejeter
@@ -311,6 +325,7 @@ const AdminPendingSellers = () => {
                 variant={actionType === 'validate' ? 'primary' : 'danger'}
                 onClick={confirmAction}
                 className="flex-1"
+                loading={loading}
               >
                 Confirmer
               </Button>

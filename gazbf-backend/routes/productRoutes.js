@@ -1,45 +1,60 @@
 // ==========================================
-// FICHIER: routes/productRoutes.js
+// FICHIER: routes/productRoutes.js (SANS VALIDATION)
 // ==========================================
 const express = require('express');
 const router = express.Router();
 const productController = require('../controllers/productController');
-const { protect, authorize, checkSubscription, checkSellerValidation, checkSellerApproved } = require('../middleware/auth');
+const { 
+  protect, 
+  authorize, 
+  checkSellerAccess
+} = require('../middleware/auth');
 
-// Routes publiques
+// ==========================================
+// ROUTES PUBLIQUES
+// ==========================================
 router.get('/search', productController.searchProducts);
 router.get('/seller/:sellerId', productController.getSellerProducts);
 router.post('/:id/view', productController.incrementView);
 
-// Routes protégées - Revendeur
+// ==========================================
+// ROUTES PROTÉGÉES - REVENDEUR
+// (Seulement abonnement actif requis)
+// ==========================================
+
+// Créer un produit
 router.post(
   '/',
   protect,
   authorize('revendeur'),
-  checkSellerValidation,
-  checkSubscription,
-  checkSellerApproved,
+  checkSellerAccess, // ✅ SEULEMENT vérifier l'abonnement
   productController.createProduct
 );
 
+// Obtenir mes produits
 router.get(
   '/my-products',
   protect,
   authorize('revendeur'),
+  checkSellerAccess,
   productController.getMyProducts
 );
 
+// Mettre à jour un produit
 router.put(
   '/:id',
   protect,
   authorize('revendeur'),
+  checkSellerAccess,
   productController.updateProduct
 );
 
+// Supprimer un produit
 router.delete(
   '/:id',
   protect,
   authorize('revendeur'),
+  checkSellerAccess,
   productController.deleteProduct
 );
 

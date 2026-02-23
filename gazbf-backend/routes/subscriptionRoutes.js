@@ -1,20 +1,27 @@
-// ==========================================
-// FICHIER: routes/subscriptionRoutes.js
-// ==========================================
 const express = require('express');
 const router = express.Router();
 const subscriptionController = require('../controllers/subscriptionController');
 const { protect } = require('../middleware/auth');
 
-// Routes publiques
+// Toutes les routes nécessitent authentification
+router.use(protect);
+
+// Plans disponibles
 router.get('/plans', subscriptionController.getPlans);
 
-// Routes protégées
-router.post('/', protect, subscriptionController.createSubscription);
-router.post('/confirm-payment', protect, subscriptionController.confirmPayment);
-router.get('/my-subscription', protect, subscriptionController.getMySubscription);
-router.get('/transactions', protect, subscriptionController.getMyTransactions);
-router.put('/cancel-auto-renew', protect, subscriptionController.cancelAutoRenew);
-router.put('/enable-auto-renew', protect, subscriptionController.enableAutoRenew);
+// Créer abonnement
+router.post('/', subscriptionController.createSubscription);
+
+// Mon abonnement
+router.get('/my-subscription', subscriptionController.getMySubscription);
+
+// Renouvellement anticipé (une seule fois avant expiration)
+router.put('/early-renewal', subscriptionController.earlyRenewal);
+
+// Renouveler
+router.put('/renew', subscriptionController.renewSubscription);
+
+// Suppression immédiate
+router.delete('/', subscriptionController.deleteSubscription);
 
 module.exports = router;

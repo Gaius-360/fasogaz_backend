@@ -1,8 +1,11 @@
-// src/pages/admin/AdminLogin.jsx
+// ==========================================
+// FICHIER: src/pages/admin/AdminLogin.jsx (VERSION RESPONSIVE)
+// ✅ RESPONSIVE: Optimisé pour mobile (320px+), tablette et desktop
+// ==========================================
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Lock, User, AlertCircle } from 'lucide-react';
+import { Shield, Lock, User } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Input from '../../components/common/Input';
 import Alert from '../../components/common/Alert';
@@ -13,7 +16,6 @@ const AdminLogin = () => {
   const navigate = useNavigate();
   const login = useAuthStore(state => state.login);
   
-
   const [formData, setFormData] = useState({
     username: '',
     password: ''
@@ -58,7 +60,6 @@ const AdminLogin = () => {
 
       const { token, admin } = response.data;
 
-      // 🔥 LOGIN CENTRALISÉ
       login(token, {
         ...admin,
         role: 'admin'
@@ -84,44 +85,34 @@ const AdminLogin = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-600 via-primary-700 to-secondary-600 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-primary-600 via-primary-700 to-secondary-600 flex items-center justify-center p-3 sm:p-4 md:p-6">
       <div className="max-w-md w-full">
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-white rounded-full mb-4 shadow-lg">
-            <Shield className="h-10 w-10 text-primary-600" />
+        {/* Header - Responsive */}
+        <div className="text-center mb-6 sm:mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-white rounded-full mb-3 sm:mb-4 shadow-lg">
+            <Shield className="h-8 w-8 sm:h-10 sm:w-10 text-primary-600" />
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Administration GAZBF
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">
+            Administration FasoGaz
           </h1>
-          <p className="text-primary-100">
+          <p className="text-sm sm:text-base text-primary-100 px-4">
             Accès réservé aux administrateurs
           </p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
+        {/* Formulaire - Responsive */}
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl p-6 sm:p-8">
           {alert && (
             <Alert
               type={alert.type}
               message={alert.message}
               onClose={() => setAlert(null)}
-              className="mb-6"
+              className="mb-4 sm:mb-6"
             />
           )}
 
-          {/* TEST ONLY */}
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-blue-600 mt-0.5" />
-              <div className="text-sm">
-                <strong>Test :</strong><br />
-                admin / Admin@2025
-              </div>
-            </div>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
             <Input
               label="Nom d'utilisateur"
               name="username"
@@ -130,6 +121,7 @@ const AdminLogin = () => {
               error={errors.username}
               icon={User}
               required
+              autoComplete="username"
             />
 
             <Input
@@ -141,6 +133,7 @@ const AdminLogin = () => {
               error={errors.password}
               icon={Lock}
               required
+              autoComplete="current-password"
             />
 
             <Button
@@ -148,18 +141,29 @@ const AdminLogin = () => {
               fullWidth
               loading={loading}
             >
-              <Shield className="h-5 w-5 mr-2" />
+              <Shield className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
               Se connecter
             </Button>
           </form>
+
+          {/* Info sécurité - Responsive */}
+          <div className="mt-5 sm:mt-6 pt-5 sm:pt-6 border-t border-gray-200">
+            <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-600">
+              <Lock className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" />
+              <p>
+                Connexion sécurisée avec chiffrement de bout en bout
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="mt-6 text-center">
+        {/* Retour accueil - Responsive */}
+        <div className="mt-5 sm:mt-6 text-center">
           <button
             onClick={() => navigate('/')}
-            className="text-white text-sm"
+            className="text-white text-sm hover:text-primary-100 transition-colors"
           >
-            ← Retour à l’accueil
+            ← Retour à l'accueil
           </button>
         </div>
 

@@ -1,6 +1,7 @@
 // ==========================================
 // FICHIER: models/orderItem.js
 // ==========================================
+
 module.exports = (sequelize, DataTypes) => {
   const OrderItem = sequelize.define('OrderItem', {
     id: {
@@ -31,20 +32,25 @@ module.exports = (sequelize, DataTypes) => {
         min: 1
       }
     },
-    unitPrice: {
+    price: {
       type: DataTypes.DECIMAL(10, 2),
-      allowNull: false
+      allowNull: false,
+      comment: 'Prix unitaire au moment de la commande'
     },
     subtotal: {
       type: DataTypes.DECIMAL(10, 2),
-      allowNull: false
+      allowNull: false,
+      comment: 'Prix total = price * quantity'
     }
   }, {
     tableName: 'order_items',
     timestamps: true,
     hooks: {
-      beforeSave: (item) => {
-        item.subtotal = item.quantity * item.unitPrice;
+      beforeValidate: (orderItem) => {
+        // Calculer automatiquement le sous-total
+        if (orderItem.price && orderItem.quantity) {
+          orderItem.subtotal = parseFloat(orderItem.price) * parseInt(orderItem.quantity);
+        }
       }
     }
   });

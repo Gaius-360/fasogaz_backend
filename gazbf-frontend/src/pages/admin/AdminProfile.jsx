@@ -42,7 +42,7 @@ const AdminProfile = () => {
   const [profileData, setProfileData] = useState({
     firstName: '',
     lastName: '',
-    email: '',
+    
     username: ''
   });
 
@@ -66,7 +66,6 @@ const AdminProfile = () => {
         setProfileData({
           firstName: response.data.firstName || '',
           lastName: response.data.lastName || '',
-          email: response.data.email || '',
           username: response.data.username || ''
         });
       }
@@ -310,14 +309,7 @@ const AdminProfile = () => {
               helpText="Le nom d'utilisateur ne peut pas être modifié"
             />
 
-            <Input
-              label="Email"
-              name="email"
-              type="email"
-              value={profileData.email}
-              onChange={handleProfileChange}
-              icon={Mail}
-            />
+            
 
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <div className="flex gap-3">
@@ -329,12 +321,7 @@ const AdminProfile = () => {
                   <p className="text-sm text-blue-700 mt-1">
                     Vous avez un accès complet à toutes les fonctionnalités de la plateforme
                   </p>
-                  <div className="mt-3 space-y-1 text-xs text-blue-600">
-                    <div className="flex items-center gap-2">
-                      <Calendar className="w-4 h-4" />
-                      Dernière connexion : {user?.lastLogin ? new Date(user.lastLogin).toLocaleString('fr-FR') : 'Première connexion'}
-                    </div>
-                  </div>
+                  
                 </div>
               </div>
             </div>

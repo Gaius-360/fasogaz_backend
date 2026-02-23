@@ -1,5 +1,5 @@
 // ==========================================
-// FICHIER: src/api/reviewService.js
+// FICHIER: src/api/reviewService.js - AVEC getOrderReviews
 // ==========================================
 import api from './axios';
 
@@ -16,15 +16,28 @@ const reviewService = {
     return response.data;
   },
 
-  // Revendeur - Avis reçus
-  getReceivedReviews: async () => {
-    const response = await api.get('/reviews/received');
+  // Obtenir les avis d'une commande spécifique
+  getOrderReviews: async (orderId) => {
+    const response = await api.get(`/reviews/order/${orderId}`);
     return response.data;
   },
 
+  // Revendeur - Avis reçus
+  getReceivedReviews: async (type = null) => {
+    const params = type ? { type } : {};
+    const response = await api.get('/reviews/received', { params });
+    return response.data;
+  },
+
+  // Revendeur - Répondre à un avis
+  respondToReview: async (reviewId, response) => {
+    const result = await api.put(`/reviews/${reviewId}/respond`, { response });
+    return result.data;
+  },
+
   // Public - Avis d'un revendeur
-  getSellerReviews: async (sellerId) => {
-    const response = await api.get(`/reviews/seller/${sellerId}`);
+  getSellerReviews: async (sellerId, params = {}) => {
+    const response = await api.get(`/reviews/seller/${sellerId}`, { params });
     return response.data;
   }
 };

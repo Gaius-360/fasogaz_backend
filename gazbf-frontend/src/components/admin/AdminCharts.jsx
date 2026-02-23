@@ -1,6 +1,7 @@
 // ==========================================
 // FICHIER: src/components/admin/AdminCharts.jsx
 // Composants de graphiques pour le dashboard admin
+// PARTIE 1/4
 // ==========================================
 
 import React from 'react';
@@ -37,28 +38,43 @@ const COLORS = {
 // ============================================
 // 1. GRAPHIQUE D'ÉVOLUTION DES REVENUS
 // ============================================
-export const RevenueChart = ({ data }) => {
+export const RevenueChart = ({ data = [] }) => {
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
+      const clientValue = payload[0]?.value || 0;
+      const sellerValue = payload[1]?.value || 0;
       return (
         <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
           <p className="text-sm font-medium text-gray-900 mb-2">
             {payload[0].payload.date}
           </p>
           <p className="text-sm text-blue-600">
-            Clients: {formatPrice(payload[0].value)}
+            Clients: {formatPrice(clientValue)}
           </p>
           <p className="text-sm text-purple-600">
-            Revendeurs: {formatPrice(payload[1].value)}
+            Revendeurs: {formatPrice(sellerValue)}
           </p>
           <p className="text-sm font-semibold text-gray-900 mt-1">
-            Total: {formatPrice(payload[0].value + payload[1].value)}
+            Total: {formatPrice(clientValue + sellerValue)}
           </p>
         </div>
       );
     }
     return null;
   };
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-6">
+          Évolution des Revenus (30 derniers jours)
+        </h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          Aucune donnée disponible
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg border p-6">
@@ -112,10 +128,15 @@ export const RevenueChart = ({ data }) => {
   );
 };
 
+// ==========================================
+// FICHIER: src/components/admin/AdminCharts.jsx
+// PARTIE 2/4 - OrdersBarChart et RevenuePieChart
+// ==========================================
+
 // ============================================
 // 2. GRAPHIQUE EN BARRES - COMMANDES PAR JOUR
 // ============================================
-export const OrdersBarChart = ({ data }) => {
+export const OrdersBarChart = ({ data = [] }) => {
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       return (
@@ -131,6 +152,19 @@ export const OrdersBarChart = ({ data }) => {
     }
     return null;
   };
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-6">
+          Commandes par Jour (7 derniers jours)
+        </h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          Aucune donnée disponible
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg border p-6">
@@ -164,15 +198,31 @@ export const OrdersBarChart = ({ data }) => {
 // ============================================
 // 3. GRAPHIQUE CIRCULAIRE - RÉPARTITION REVENUS
 // ============================================
-export const RevenuePieChart = ({ data }) => {
+export const RevenuePieChart = ({ data = {} }) => {
+  const clients = data.clients || 0;
+  const sellers = data.sellers || 0;
+  const total = clients + sellers;
+
+  if (total === 0) {
+    return (
+      <div className="bg-white rounded-lg border p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-6">
+          Répartition des Revenus
+        </h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          Aucune donnée disponible
+        </div>
+      </div>
+    );
+  }
+
   const chartData = [
-    { name: 'Clients', value: data.clients, color: COLORS.blue },
-    { name: 'Revendeurs', value: data.sellers, color: COLORS.purple }
+    { name: 'Clients', value: clients, color: COLORS.blue },
+    { name: 'Revendeurs', value: sellers, color: COLORS.purple }
   ];
 
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
-      const total = data.clients + data.sellers;
       const percentage = ((payload[0].value / total) * 100).toFixed(1);
       return (
         <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
@@ -245,33 +295,53 @@ export const RevenuePieChart = ({ data }) => {
       </ResponsiveContainer>
     </div>
   );
-};
+}; 
+
+// ==========================================
+// FICHIER: src/components/admin/AdminCharts.jsx
+// PARTIE 3/4 - UserGrowthChart, QuickStats et TopSellersTable
+// ==========================================
 
 // ============================================
 // 4. GRAPHIQUE UTILISATEURS - CROISSANCE
 // ============================================
-export const UserGrowthChart = ({ data }) => {
+export const UserGrowthChart = ({ data = [] }) => {
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
+      const clientValue = payload[0]?.value || 0;
+      const sellerValue = payload[1]?.value || 0;
       return (
         <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
           <p className="text-sm font-medium text-gray-900 mb-2">
             {payload[0].payload.month}
           </p>
           <p className="text-sm text-blue-600">
-            Clients: {payload[0].value}
+            Clients: {clientValue}
           </p>
           <p className="text-sm text-purple-600">
-            Revendeurs: {payload[1].value}
+            Revendeurs: {sellerValue}
           </p>
           <p className="text-sm font-semibold text-gray-900 mt-1">
-            Total: {payload[0].value + payload[1].value}
+            Total: {clientValue + sellerValue}
           </p>
         </div>
       );
     }
     return null;
   };
+
+  if (!data || data.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-6">
+          Croissance des Utilisateurs (6 derniers mois)
+        </h3>
+        <div className="h-[300px] flex items-center justify-center text-gray-500">
+          Aucune donnée disponible
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg border p-6">
@@ -352,14 +422,27 @@ export const QuickStats = ({ stats }) => {
 // ============================================
 // 6. TABLEAU DE CLASSEMENT - TOP REVENDEURS
 // ============================================
-export const TopSellersTable = ({ sellers }) => {
+export const TopSellersTable = ({ sellers = [] }) => {
+  if (!sellers || sellers.length === 0) {
+    return (
+      <div className="bg-white rounded-lg border p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-6">
+          🏆 Top 5 Revendeurs du Mois
+        </h3>
+        <div className="text-center py-8 text-gray-500">
+          Aucun revendeur actif ce mois
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-lg border p-6">
       <h3 className="text-lg font-semibold text-gray-900 mb-6">
-        🏆 Top 5 Revendeurs du Mois
+        🏆 Top {Math.min(sellers.length, 5)} Revendeurs du Mois
       </h3>
       <div className="space-y-3">
-        {sellers.map((seller, index) => (
+        {sellers.slice(0, 5).map((seller, index) => (
           <div 
             key={seller.id}
             className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"

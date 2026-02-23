@@ -1,68 +1,63 @@
 // ==========================================
-// FICHIER: routes/orderRoutes.js
+// FICHIER: routes/orderRoutes.js (VERSION AVEC CONTRÔLE D'ACCÈS)
 // ==========================================
 const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
-const { protect, authorize, checkSubscription } = require('../middleware/auth');
+const { 
+  protect, 
+  authorize, 
+  checkSellerAccess 
+} = require('../middleware/auth');
 
-// Routes client
+// Toutes les routes nécessitent authentification
+router.use(protect);
+
+// ==========================================
+// ROUTES CLIENT
+// ==========================================
 router.post(
   '/',
-  protect,
   authorize('client'),
-  checkSubscription,
   orderController.createOrder
 );
 
 router.get(
   '/my-orders',
-  protect,
   authorize('client'),
   orderController.getMyOrders
 );
 
+router.get(
+  '/:id',
+  orderController.getOrderById
+);
+
 router.put(
   '/:id/cancel',
-  protect,
   authorize('client'),
   orderController.cancelOrder
 );
 
-// Routes revendeur
+// ==========================================
+// ROUTES REVENDEUR
+// (Nécessitent abonnement actif)
+// ==========================================
+
+// Obtenir les commandes reçues - Nécessite abonnement actif
 router.get(
   '/received',
-  protect,
   authorize('revendeur'),
+  checkSellerAccess, // ✅ NOUVEAU : Vérifier l'abonnement actif
   orderController.getReceivedOrders
 );
 
-router.put(
-  '/:id/accept',
-  protect,
-  authorize('revendeur'),
-  orderController.acceptOrder
-);
-
-router.put(
-  '/:id/reject',
-  protect,
-  authorize('revendeur'),
-  orderController.rejectOrder
-);
-
+// Mettre à jour le statut d'une commande - Nécessite abonnement actif
 router.put(
   '/:id/status',
-  protect,
   authorize('revendeur'),
+  checkSellerAccess, // ✅ NOUVEAU : Vérifier l'abonnement actif
   orderController.updateOrderStatus
-);
-
-// Routes communes
-router.get(
-  '/:id',
-  protect,
-  orderController.getOrderById
 );
 
 module.exports = router;

@@ -1,385 +1,567 @@
 // ==========================================
-// FICHIER: controllers/subscriptionController.js
+// FICHIER: controllers/subscriptionController.js (VERSION AVEC TRANSACTIONS)
+// Gestion des abonnements revendeurs avec création automatique de transactions
 // ==========================================
-const db = require('../models');
-const ResponseHandler = require('../utils/responseHandler');
 
-// Plans disponibles
-const SUBSCRIPTION_PLANS = {
-  // Clients
-  client_week: { price: 250, duration: 7, name: 'Client - 1 Semaine' },
-  client_month: { price: 800, duration: 30, name: 'Client - 1 Mois' },
-  
-  // Revendeurs
-  seller_free: { price: 0, duration: 30, name: 'Découverte - 30 jours' },
-  seller_standard: { price: 3000, duration: 30, name: 'Standard' },
-  seller_pro: { price: 7000, duration: 30, name: 'Pro' },
-  seller_enterprise: { price: 15000, duration: 30, name: 'Entreprise' }
-};
+const { Subscription, Pricing, User, Transaction } = require('../models');
+const { Op } = require('sequelize');
+const transactionController = require('./transactionController');
 
-// @desc    Obtenir les plans disponibles
-// @route   GET /api/subscriptions/plans
-// @access  Public
-exports.getPlans = async (req, res) => {
-  try {
-    const { role } = req.query;
-
-    let plans = SUBSCRIPTION_PLANS;
-
-    // Filtrer par rôle si spécifié
-    if (role === 'client') {
-      plans = {
-        client_week: SUBSCRIPTION_PLANS.client_week,
-        client_month: SUBSCRIPTION_PLANS.client_month
-      };
-    } else if (role === 'revendeur') {
-      plans = {
-        seller_free: SUBSCRIPTION_PLANS.seller_free,
-        seller_standard: SUBSCRIPTION_PLANS.seller_standard,
-        seller_pro: SUBSCRIPTION_PLANS.seller_pro,
-        seller_enterprise: SUBSCRIPTION_PLANS.seller_enterprise
-      };
-    }
-
-    return ResponseHandler.success(res, 'Plans disponibles', plans);
-  } catch (error) {
-    console.error('Erreur récupération plans:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
-  }
-};
-
-// @desc    Créer un abonnement
-// @route   POST /api/subscriptions
-// @access  Private
+/**
+ * Créer abonnement AVEC transaction
+ */
 exports.createSubscription = async (req, res) => {
-  const transaction = await db.sequelize.transaction();
-
   try {
-    const { planType, paymentMethod, paymentPhone } = req.body;
+    const { planType, paymentMethod, transactionId } = req.body;
+    const userId = req.user.id;
 
-    // Vérifier que le plan existe
-    if (!SUBSCRIPTION_PLANS[planType]) {
-      await transaction.rollback();
-      return ResponseHandler.error(res, 'Plan invalide', 400);
+    console.log('📝 Création abonnement:', { planType, paymentMethod, userId });
+
+    if (!planType || !paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'Plan et méthode de paiement requis'
+      });
     }
 
-    const plan = SUBSCRIPTION_PLANS[planType];
-
-    // Vérifier la cohérence rôle/plan
-    const isClientPlan = planType.startsWith('client_');
-    const isSellerPlan = planType.startsWith('seller_');
-
-    if (req.user.role === 'client' && !isClientPlan) {
-      await transaction.rollback();
-      return ResponseHandler.error(res, 'Plan non disponible pour les clients', 400);
+    // Extraction du type de plan
+    let planTypeKey = planType;
+    if (planType.includes('_')) {
+      planTypeKey = planType.split('_')[0];
     }
 
-    if (req.user.role === 'revendeur' && !isSellerPlan) {
-      await transaction.rollback();
-      return ResponseHandler.error(res, 'Plan non disponible pour les revendeurs', 400);
+    // Vérifier que l'utilisateur est bien revendeur
+    if (req.user.role !== 'revendeur') {
+      return res.status(403).json({
+        success: false,
+        message: 'Cette fonctionnalité est réservée aux revendeurs'
+      });
     }
 
-    // Vérifier s'il y a déjà un abonnement actif
-    const existingSubscription = await db.Subscription.findOne({
-      where: { userId: req.user.id }
+    // Récupérer config de tarification
+    const pricingConfig = await Pricing.findOne({ 
+      where: { targetRole: 'revendeur' }
     });
 
-    if (existingSubscription && existingSubscription.isActive) {
-      const endDate = new Date(existingSubscription.endDate);
-      if (endDate > new Date()) {
-        await transaction.rollback();
-        return ResponseHandler.error(
-          res,
-          `Vous avez déjà un abonnement actif jusqu'au ${endDate.toLocaleDateString('fr-FR')}`,
-          400
-        );
+    if (!pricingConfig || !pricingConfig.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Système d\'abonnement non activé'
+      });
+    }
+
+    const planConfig = pricingConfig.plans[planTypeKey];
+    
+    if (!planConfig || !planConfig.enabled || !planConfig.price || planConfig.price <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ce plan n\'est pas disponible actuellement'
+      });
+    }
+
+    // Vérifier s'il existe déjà un abonnement actif
+    const existingSubscription = await Subscription.findOne({
+      where: {
+        userId,
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
       }
+    });
+
+    if (existingSubscription) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vous avez déjà un abonnement actif',
+        currentSubscription: {
+          planType: existingSubscription.planType,
+          endDate: existingSubscription.endDate
+        }
+      });
     }
 
     // Calculer les dates
     const startDate = new Date();
     const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.duration);
+    endDate.setDate(endDate.getDate() + planConfig.duration);
 
-    // Créer la transaction de paiement
-    const transactionRecord = await db.Transaction.create({
-      userId: req.user.id,
-      type: 'subscription',
-      amount: plan.price,
+    // ✅ CRÉER L'ABONNEMENT
+    const subscription = await Subscription.create({
+      userId,
+      planType: planTypeKey,
+      amount: planConfig.price,
+      initialAmount: planConfig.price,
+      duration: planConfig.duration,
+      startDate,
+      endDate,
       paymentMethod,
-      paymentPhone,
-      status: plan.price === 0 ? 'completed' : 'pending',
-      metadata: {
-        planType,
-        planName: plan.name,
-        duration: plan.duration
-      }
-    }, { transaction });
+      transactionId: transactionId || `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      status: 'active',
+      isActive: true,
+      autoRenew: pricingConfig.options?.autoRenew || false,
+      hasEarlyRenewal: false
+    });
 
-    // Si gratuit, créer l'abonnement directement
-    if (plan.price === 0) {
-      if (existingSubscription) {
-        await existingSubscription.update({
-          planType,
-          startDate,
-          endDate,
-          isActive: true,
-          price: plan.price
-        }, { transaction });
-      } else {
-        await db.Subscription.create({
-          userId: req.user.id,
-          planType,
-          startDate,
-          endDate,
-          isActive: true,
-          price: plan.price
-        }, { transaction });
-      }
-
-      await transaction.commit();
-
-      return ResponseHandler.success(
-        res,
-        'Abonnement gratuit activé',
-        {
-          subscription: await db.Subscription.findOne({ where: { userId: req.user.id } }),
-          transaction: transactionRecord
-        },
-        201
-      );
-    }
-
-    // Pour les abonnements payants, retourner les infos de paiement
-    await transaction.commit();
-
-    return ResponseHandler.success(
-      res,
-      'Transaction créée. En attente du paiement.',
+    // ✅ CRÉER LA TRANSACTION ASSOCIÉE
+    const transaction = await transactionController.createSellerSubscriptionTransaction(
+      userId,
+      subscription.id,
+      planConfig.price,
+      paymentMethod,
       {
-        transaction: transactionRecord,
-        paymentInstructions: {
-          method: paymentMethod,
-          amount: plan.price,
-          reference: transactionRecord.transactionRef,
-          message: `Procédez au paiement de ${plan.price} FCFA via ${paymentMethod} au numéro ${paymentPhone}. Référence: ${transactionRecord.transactionRef}`
-        }
+        planType: planTypeKey,
+        duration: planConfig.duration,
+        description: `Abonnement ${planTypeKey} - ${planConfig.duration} jours`,
+        isRenewal: false,
+        isEarlyRenewal: false
+      }
+    );
+
+    // Mettre à jour l'utilisateur
+    await User.update(
+      {
+        subscriptionEndDate: endDate,
+        hasActiveSubscription: true,
+        hasActiveAccess: true,
+        subscriptionAutoRenew: pricingConfig.options?.autoRenew || false,
+        freeTrialEndDate: null,
+        gracePeriodEndDate: null
       },
-      201
+      { where: { id: userId } }
     );
-  } catch (error) {
-    await transaction.rollback();
-    console.error('Erreur création abonnement:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la création', 500);
-  }
-};
 
-// @desc    Confirmer un paiement (simulé)
-// @route   POST /api/subscriptions/confirm-payment
-// @access  Private
-exports.confirmPayment = async (req, res) => {
-  const dbTransaction = await db.sequelize.transaction();
+    console.log(`✅ Abonnement créé: ${subscription.id}`);
+    console.log(`✅ Transaction créée: ${transaction.transactionNumber}`);
 
-  try {
-    const { transactionRef, externalRef } = req.body;
-
-    if (!transactionRef) {
-      await dbTransaction.rollback();
-      return ResponseHandler.error(res, 'Référence de transaction requise', 400);
-    }
-
-    // Récupérer la transaction
-    const transaction = await db.Transaction.findOne({
-      where: { 
-        transactionRef,
-        userId: req.user.id,
-        status: 'pending'
-      }
-    });
-
-    if (!transaction) {
-      await dbTransaction.rollback();
-      return ResponseHandler.error(res, 'Transaction non trouvée ou déjà traitée', 404);
-    }
-
-    // Mettre à jour la transaction
-    await transaction.update({
-      status: 'completed',
-      externalRef: externalRef || null
-    }, { transaction: dbTransaction });
-
-    // Créer ou mettre à jour l'abonnement
-    const planType = transaction.metadata.planType;
-    const plan = SUBSCRIPTION_PLANS[planType];
-
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + plan.duration);
-
-    const existingSubscription = await db.Subscription.findOne({
-      where: { userId: req.user.id }
-    });
-
-    if (existingSubscription) {
-      await existingSubscription.update({
-        planType,
-        startDate,
-        endDate,
-        isActive: true,
-        price: plan.price
-      }, { transaction: dbTransaction });
-    } else {
-      await db.Subscription.create({
-        userId: req.user.id,
-        planType,
-        startDate,
-        endDate,
-        isActive: true,
-        price: plan.price
-      }, { transaction: dbTransaction });
-    }
-
-    await dbTransaction.commit();
-
-    return ResponseHandler.success(
-      res,
-      'Paiement confirmé et abonnement activé',
-      {
-        subscription: await db.Subscription.findOne({ where: { userId: req.user.id } })
-      }
-    );
-  } catch (error) {
-    await dbTransaction.rollback();
-    console.error('Erreur confirmation paiement:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la confirmation', 500);
-  }
-};
-
-// @desc    Obtenir mon abonnement
-// @route   GET /api/subscriptions/my-subscription
-// @access  Private
-exports.getMySubscription = async (req, res) => {
-  try {
-    const subscription = await db.Subscription.findOne({
-      where: { userId: req.user.id }
-    });
-
-    if (!subscription) {
-      return ResponseHandler.success(res, 'Aucun abonnement', null);
-    }
-
-    // Vérifier l'expiration
-    const now = new Date();
-    const endDate = new Date(subscription.endDate);
-    const isExpired = endDate < now;
-
-    if (isExpired && subscription.isActive) {
-      await subscription.update({ isActive: false });
-    }
-
-    const daysRemaining = Math.ceil((endDate - now) / (1000 * 60 * 60 * 24));
-
-    return ResponseHandler.success(
-      res,
-      'Abonnement récupéré',
-      {
-        subscription,
-        status: {
-          isExpired,
-          daysRemaining: isExpired ? 0 : daysRemaining,
-          willExpireSoon: daysRemaining <= 3 && daysRemaining > 0
+    res.status(201).json({
+      success: true,
+      message: 'Abonnement créé avec succès !',
+      data: {
+        subscription: {
+          id: subscription.id,
+          planType: subscription.planType,
+          amount: subscription.amount,
+          duration: subscription.duration,
+          startDate: subscription.startDate,
+          endDate: subscription.endDate,
+          status: subscription.status,
+          isActive: subscription.isActive
+        },
+        transaction: {
+          id: transaction.id,
+          transactionNumber: transaction.transactionNumber,
+          amount: transaction.amount,
+          status: transaction.status
         }
       }
-    );
-  } catch (error) {
-    console.error('Erreur récupération abonnement:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
-  }
-};
-
-// @desc    Annuler le renouvellement automatique
-// @route   PUT /api/subscriptions/cancel-auto-renew
-// @access  Private
-exports.cancelAutoRenew = async (req, res) => {
-  try {
-    const subscription = await db.Subscription.findOne({
-      where: { userId: req.user.id }
     });
 
-    if (!subscription) {
-      return ResponseHandler.error(res, 'Aucun abonnement trouvé', 404);
-    }
-
-    await subscription.update({ autoRenew: false });
-
-    return ResponseHandler.success(
-      res,
-      'Renouvellement automatique annulé',
-      subscription
-    );
   } catch (error) {
-    console.error('Erreur annulation auto-renew:', error);
-    return ResponseHandler.error(res, 'Erreur lors de l\'annulation', 500);
+    console.error('❌ Erreur création abonnement:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la création de l\'abonnement',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
-// @desc    Activer le renouvellement automatique
-// @route   PUT /api/subscriptions/enable-auto-renew
-// @access  Private
-exports.enableAutoRenew = async (req, res) => {
+/**
+ * Renouvellement anticipé AVEC transaction
+ */
+exports.earlyRenewal = async (req, res) => {
   try {
-    const subscription = await db.Subscription.findOne({
-      where: { userId: req.user.id }
+    const { paymentMethod, transactionId } = req.body;
+    const userId = req.user.id;
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'Méthode de paiement requise'
+      });
+    }
+
+    const currentSubscription = await Subscription.findOne({
+      where: {
+        userId,
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      }
     });
 
-    if (!subscription) {
-      return ResponseHandler.error(res, 'Aucun abonnement trouvé', 404);
+    if (!currentSubscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Aucun abonnement actif à renouveler'
+      });
     }
 
-    await subscription.update({ autoRenew: true });
+    if (currentSubscription.hasEarlyRenewal) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vous avez déjà effectué un renouvellement anticipé pour cet abonnement.'
+      });
+    }
 
-    return ResponseHandler.success(
-      res,
-      'Renouvellement automatique activé',
-      subscription
+    // Récupérer la config du plan
+    const pricingConfig = await Pricing.findOne({ 
+      where: { targetRole: 'revendeur' }
+    });
+
+    if (!pricingConfig || !pricingConfig.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Système d\'abonnement non disponible'
+      });
+    }
+
+    const planConfig = pricingConfig.plans[currentSubscription.planType];
+
+    if (!planConfig || !planConfig.enabled) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ce plan n\'est plus disponible'
+      });
+    }
+
+    // Sauvegarder l'ancienne date
+    const oldEndDate = new Date(currentSubscription.endDate);
+    
+    // Prolonger la date d'expiration
+    const newEndDate = new Date(currentSubscription.endDate);
+    newEndDate.setDate(newEndDate.getDate() + planConfig.duration);
+
+    // Calculer le nouveau montant total
+    const newTotalAmount = parseFloat(currentSubscription.amount) + parseFloat(planConfig.price);
+
+    // Mettre à jour l'abonnement
+    await currentSubscription.update({
+      endDate: newEndDate,
+      hasEarlyRenewal: true,
+      amount: newTotalAmount,
+      paymentMethod: paymentMethod
+    });
+
+    // ✅ CRÉER LA TRANSACTION DE RENOUVELLEMENT ANTICIPÉ
+    const transaction = await transactionController.createSellerSubscriptionTransaction(
+      userId,
+      currentSubscription.id,
+      planConfig.price,
+      paymentMethod,
+      {
+        planType: currentSubscription.planType,
+        duration: planConfig.duration,
+        description: `Renouvellement anticipé ${currentSubscription.planType}`,
+        isRenewal: true,
+        isEarlyRenewal: true
+      }
     );
+
+    // Mettre à jour l'utilisateur
+    await User.update(
+      { subscriptionEndDate: newEndDate },
+      { where: { id: userId } }
+    );
+
+    console.log(`✅ Renouvellement anticipé effectué`);
+    console.log(`✅ Transaction créée: ${transaction.transactionNumber}`);
+
+    res.json({
+      success: true,
+      message: `Abonnement prolongé de ${planConfig.duration} jours jusqu'au ${newEndDate.toLocaleDateString('fr-FR')} !`,
+      data: {
+        subscription: {
+          id: currentSubscription.id,
+          planType: currentSubscription.planType,
+          oldEndDate,
+          newEndDate,
+          hasEarlyRenewal: true,
+          addedDays: planConfig.duration,
+          totalAmount: newTotalAmount
+        },
+        transaction: {
+          id: transaction.id,
+          transactionNumber: transaction.transactionNumber,
+          amount: transaction.amount,
+          status: transaction.status
+        }
+      }
+    });
+
   } catch (error) {
-    console.error('Erreur activation auto-renew:', error);
-    return ResponseHandler.error(res, 'Erreur lors de l\'activation', 500);
+    console.error('❌ Erreur renouvellement anticipé:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors du renouvellement anticipé',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
-// @desc    Historique des transactions
-// @route   GET /api/subscriptions/transactions
-// @access  Private
-exports.getMyTransactions = async (req, res) => {
+/**
+ * Renouveler (après expiration) AVEC transaction
+ */
+exports.renewSubscription = async (req, res) => {
   try {
-    const transactions = await db.Transaction.findAll({
-      where: { userId: req.user.id },
+    const { paymentMethod, transactionId } = req.body;
+    const userId = req.user.id;
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'Méthode de paiement requise'
+      });
+    }
+
+    const current = await Subscription.findOne({
+      where: { userId },
       order: [['createdAt', 'DESC']]
     });
 
-    const stats = {
-      total: transactions.length,
-      completed: transactions.filter(t => t.status === 'completed').length,
-      pending: transactions.filter(t => t.status === 'pending').length,
-      failed: transactions.filter(t => t.status === 'failed').length,
-      totalSpent: transactions
-        .filter(t => t.status === 'completed' && t.type === 'subscription')
-        .reduce((sum, t) => sum + parseFloat(t.amount), 0)
-    };
+    if (!current) {
+      return res.status(404).json({
+        success: false,
+        message: 'Aucun abonnement à renouveler'
+      });
+    }
 
-    return ResponseHandler.success(
-      res,
-      'Historique des transactions',
+    // Récupérer la config
+    const pricingConfig = await Pricing.findOne({ 
+      where: { targetRole: 'revendeur' } 
+    });
+    
+    const planConfig = pricingConfig?.plans[current.planType];
+
+    if (!planConfig || !planConfig.enabled) {
+      return res.status(400).json({
+        success: false,
+        message: 'Plan non disponible'
+      });
+    }
+
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + planConfig.duration);
+
+    // ✅ CRÉER LE NOUVEL ABONNEMENT
+    const newSub = await Subscription.create({
+      userId,
+      planType: current.planType,
+      amount: planConfig.price,
+      initialAmount: planConfig.price,
+      duration: planConfig.duration,
+      startDate,
+      endDate,
+      paymentMethod: paymentMethod,
+      transactionId: transactionId || `TXN-RENEW-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      status: 'active',
+      isActive: true,
+      autoRenew: current.autoRenew,
+      hasEarlyRenewal: false
+    });
+
+    // ✅ CRÉER LA TRANSACTION DE RENOUVELLEMENT
+    const transaction = await transactionController.createSellerSubscriptionTransaction(
+      userId,
+      newSub.id,
+      planConfig.price,
+      paymentMethod,
       {
-        transactions,
-        stats
+        planType: current.planType,
+        duration: planConfig.duration,
+        description: `Renouvellement abonnement ${current.planType}`,
+        isRenewal: true,
+        isEarlyRenewal: false
       }
     );
+
+    await current.update({ 
+      isActive: false,
+      status: 'expired'
+    });
+
+    await User.update(
+      {
+        subscriptionEndDate: endDate,
+        hasActiveSubscription: true,
+        hasActiveAccess: true,
+        gracePeriodEndDate: null
+      },
+      { where: { id: userId } }
+    );
+
+    console.log(`✅ Abonnement renouvelé`);
+    console.log(`✅ Transaction créée: ${transaction.transactionNumber}`);
+
+    res.json({
+      success: true,
+      message: 'Abonnement renouvelé avec succès !',
+      data: {
+        subscription: newSub,
+        transaction: {
+          id: transaction.id,
+          transactionNumber: transaction.transactionNumber,
+          amount: transaction.amount,
+          status: transaction.status
+        }
+      }
+    });
+
   } catch (error) {
-    console.error('Erreur récupération transactions:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
+    console.error('❌ Erreur renouvellement:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur renouvellement',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Récupérer mon abonnement
+ */
+exports.getMySubscription = async (req, res) => {
+  try {
+    const subscription = await Subscription.findOne({
+      where: {
+        userId: req.user.id,
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      },
+      order: [['createdAt', 'DESC']]
+    });
+
+    if (!subscription) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'Aucun abonnement actif'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: subscription
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur récupération:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur récupération',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Suppression immédiate
+ */
+exports.deleteSubscription = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const subscription = await Subscription.findOne({
+      where: {
+        userId,
+        isActive: true,
+        endDate: { [Op.gt]: new Date() }
+      }
+    });
+
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: 'Aucun abonnement actif à supprimer'
+      });
+    }
+
+    // Supprimer immédiatement
+    const now = new Date();
+    await subscription.update({
+      isActive: false,
+      status: 'deleted',
+      endDate: now
+    });
+
+    await User.update(
+      {
+        subscriptionEndDate: now,
+        hasActiveSubscription: false,
+        hasActiveAccess: false,
+        subscriptionAutoRenew: false,
+        gracePeriodEndDate: null
+      },
+      { where: { id: userId } }
+    );
+
+    console.log('✅ Abonnement supprimé immédiatement');
+
+    res.json({
+      success: true,
+      message: 'Abonnement supprimé immédiatement. Votre dépôt n\'est plus visible.',
+      data: {
+        deletedAt: now,
+        planType: subscription.planType,
+        id: subscription.id
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur suppression:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur lors de la suppression',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
+ * Plans disponibles
+ */
+exports.getPlans = async (req, res) => {
+  try {
+    const userRole = req.user.role === 'revendeur' ? 'revendeur' : 'client';
+    const pricingConfig = await Pricing.findOne({ where: { targetRole: userRole } });
+
+    if (!pricingConfig?.isActive) {
+      return res.json({
+        success: true,
+        data: {
+          isActive: false,
+          message: 'Accès gratuit illimité',
+          plans: []
+        }
+      });
+    }
+
+    const activePlans = {};
+    Object.entries(pricingConfig.plans).forEach(([key, plan]) => {
+      if (plan.enabled && plan.price > 0) {
+        activePlans[key] = {
+          ...plan,
+          id: `${key}_${userRole}`
+        };
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        isActive: true,
+        freeTrialDays: pricingConfig.freeTrialDays,
+        plans: activePlans,
+        options: pricingConfig.options
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur plans:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur récupération plans',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 

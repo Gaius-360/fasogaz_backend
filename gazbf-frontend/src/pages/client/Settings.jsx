@@ -1,23 +1,42 @@
-
 // ==========================================
-// FICHIER: src/pages/client/Settings.jsx (NOUVEAU)
+// FICHIER: src/pages/client/Settings.jsx (VERSION COMPLÈTE)
 // ==========================================
 import React, { useState } from 'react';
-import { ArrowLeft, Lock, Bell, Globe, Shield } from 'lucide-react';
+import { ArrowLeft, Lock, Bell, Globe, Shield, AlertTriangle, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Input from '../../components/common/Input';
 import Alert from '../../components/common/Alert';
+import useAuthStore from '../../store/authStore';
+import { api } from '../../api/apiSwitch';
+
+// Modals
+import PrivacyPolicyModal from '../../components/client/PrivacyPolicyModal';
+import TermsModal from '../../components/client/TermsModal';
+import DeleteAccountModal from '../../components/client/DeleteAccountModal';
 
 const Settings = () => {
   const navigate = useNavigate();
+  const { user, updateUser } = useAuthStore();
   const [alert, setAlert] = useState(null);
   const [loading, setLoading] = useState(false);
+  
+  // États pour les modals
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
+  });
+
+  const [notifications, setNotifications] = useState({
+    orders: true,
+    promotions: true,
+    subscription: true
   });
 
   const handlePasswordChange = (e) => {
@@ -26,6 +45,15 @@ const Settings = () => {
   };
 
   const handleSavePassword = async () => {
+    // Validation
+    if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
+      setAlert({
+        type: 'error',
+        message: 'Tous les champs sont requis'
+      });
+      return;
+    }
+
     if (passwordData.newPassword !== passwordData.confirmPassword) {
       setAlert({
         type: 'error',
@@ -38,8 +66,12 @@ const Settings = () => {
     setAlert(null);
 
     try {
-      // Simulation
-      setTimeout(() => {
+      const response = await api.auth.changePassword({
+        currentPassword: passwordData.currentPassword,
+        newPassword: passwordData.newPassword
+      });
+
+      if (response.success) {
         setAlert({
           type: 'success',
           message: 'Mot de passe modifié avec succès'
@@ -49,15 +81,23 @@ const Settings = () => {
           newPassword: '',
           confirmPassword: ''
         });
-        setLoading(false);
-      }, 1000);
+      }
     } catch (error) {
       setAlert({
         type: 'error',
-        message: 'Erreur lors de la modification'
+        message: error.message || 'Erreur lors de la modification'
       });
+    } finally {
       setLoading(false);
     }
+  };
+
+  const handleNotificationToggle = (key) => {
+    setNotifications(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+    // TODO: Sauvegarder les préférences en base de données
   };
 
   return (
@@ -106,7 +146,6 @@ const Settings = () => {
             value={passwordData.newPassword}
             onChange={handlePasswordChange}
             placeholder="••••••••"
-            helpText="Au moins 8 caractères"
           />
 
           <Input
@@ -123,69 +162,69 @@ const Settings = () => {
             fullWidth
             onClick={handleSavePassword}
             loading={loading}
+            disabled={loading}
           >
             Enregistrer le nouveau mot de passe
           </Button>
         </div>
       </Card>
 
-      {/* Notifications */}
-      <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <Bell className="h-6 w-6 text-primary-600" />
-          <h2 className="text-lg font-semibold text-gray-900">
-            Notifications
-          </h2>
-        </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between py-3 border-b">
-            <div>
-              <p className="font-medium text-gray-900">Commandes</p>
-              <p className="text-sm text-gray-600">Notifications sur vos commandes</p>
-            </div>
-            <input type="checkbox" defaultChecked className="w-5 h-5 text-primary-600" />
-          </div>
-
-          <div className="flex items-center justify-between py-3 border-b">
-            <div>
-              <p className="font-medium text-gray-900">Promotions</p>
-              <p className="text-sm text-gray-600">Offres spéciales et nouveautés</p>
-            </div>
-            <input type="checkbox" defaultChecked className="w-5 h-5 text-primary-600" />
-          </div>
-
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <p className="font-medium text-gray-900">Abonnement</p>
-              <p className="text-sm text-gray-600">Alertes d'expiration</p>
-            </div>
-            <input type="checkbox" defaultChecked className="w-5 h-5 text-primary-600" />
-          </div>
-        </div>
-      </Card>
+      
 
       {/* Confidentialité */}
       <Card>
         <div className="flex items-center gap-3 mb-4">
           <Shield className="h-6 w-6 text-primary-600" />
           <h2 className="text-lg font-semibold text-gray-900">
-            Confidentialité
+            Confidentialité et sécurité
           </h2>
         </div>
 
         <div className="space-y-3">
-          <Button variant="outline" fullWidth>
+          <Button
+            variant="outline"
+            fullWidth
+            onClick={() => setShowPrivacyModal(true)}
+          >
+            <FileText className="h-5 w-5 mr-2" />
             Politique de confidentialité
           </Button>
-          <Button variant="outline" fullWidth>
+          
+          <Button
+            variant="outline"
+            fullWidth
+            onClick={() => setShowTermsModal(true)}
+          >
+            <FileText className="h-5 w-5 mr-2" />
             Conditions d'utilisation
           </Button>
-          <Button variant="danger" fullWidth>
+          
+          <Button
+            variant="danger"
+            fullWidth
+            onClick={() => setShowDeleteModal(true)}
+          >
+            <AlertTriangle className="h-5 w-5 mr-2" />
             Supprimer mon compte
           </Button>
         </div>
       </Card>
+
+      {/* Modals */}
+      {showPrivacyModal && (
+        <PrivacyPolicyModal onClose={() => setShowPrivacyModal(false)} />
+      )}
+
+      {showTermsModal && (
+        <TermsModal onClose={() => setShowTermsModal(false)} />
+      )}
+
+      {showDeleteModal && (
+        <DeleteAccountModal
+          onClose={() => setShowDeleteModal(false)}
+          user={user}
+        />
+      )}
     </div>
   );
 };
