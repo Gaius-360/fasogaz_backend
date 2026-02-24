@@ -8,7 +8,7 @@ const db = require('./models');
 const errorHandler = require('./middleware/errorHandler');
 const { startSubscriptionJobs } = require('./jobs/subscriptionJobs');
 const { startNotificationJobs } = require('./jobs/notificationJobs');
-const { startOrderExpirationJobs } = require('./jobs/orderExpirationJob'); // ✅ NOUVEAU
+const { startOrderExpirationJobs } = require('./jobs/orderExpirationJob');
 
 dotenv.config();
 
@@ -18,8 +18,10 @@ const app = express();
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:4173',
-  process.env.FRONTEND_URL, // votre URL Render frontend
-];
+  'https://fasogaz.onrender.com',          // ✅ nouvelle URL
+  'https://fasogaz-frontend.onrender.com', // ✅ ancienne URL (sécurité)
+  process.env.FRONTEND_URL,                // ✅ variable d'environnement
+].filter(Boolean); // supprime les valeurs undefined/null
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -113,17 +115,16 @@ db.sequelize.authenticate()
   .then(() => {
     console.log('✅ Connexion MySQL établie avec succès');
     
-    // Synchroniser les modèles (en développement uniquement)
     db.sequelize.sync({ alter: false }).then(() => {
-  console.log('✅ Modèles synchronisés');
-});
+      console.log('✅ Modèles synchronisés');
+    });
 
-startSubscriptionJobs();
-console.log('✅ Tâches CRON abonnements démarrées');
-startNotificationJobs();
-console.log('✅ Tâches CRON notifications démarrées');
-startOrderExpirationJobs();
-console.log('✅ Tâches CRON expiration commandes démarrées');
+    startSubscriptionJobs();
+    console.log('✅ Tâches CRON abonnements démarrées');
+    startNotificationJobs();
+    console.log('✅ Tâches CRON notifications démarrées');
+    startOrderExpirationJobs();
+    console.log('✅ Tâches CRON expiration commandes démarrées');
     
     app.listen(PORT, () => {
       console.log(`\n${'='.repeat(60)}`);
@@ -132,6 +133,7 @@ console.log('✅ Tâches CRON expiration commandes démarrées');
       console.log(`📍 Port: ${PORT}`);
       console.log(`🌍 Environnement: ${process.env.NODE_ENV}`);
       console.log(`💾 Base de données: MySQL`);
+      console.log(`🌐 Origins autorisées: ${allowedOrigins.join(', ')}`);
       console.log(`\n📡 Routes disponibles:\n`);
       console.log(`🔐 AUTH:`);
       console.log(`   POST   /api/auth/register`);
