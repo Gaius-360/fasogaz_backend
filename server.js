@@ -19,7 +19,7 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:4173',
   'https://fasogaz.onrender.com',          // ✅ nouvelle URL
-  process.env.FRONTEND_URL,                // ✅ variable d'environnement
+  process.env.FRONTEND_URL,                
 ].filter(Boolean); // supprime les valeurs undefined/null
 
 app.use(cors({
