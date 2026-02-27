@@ -35,7 +35,13 @@ exports.validatePassword = (password) => {
 
 // Middleware de validation d'inscription
 exports.validateRegistration = (req, res, next) => {
-  const { phone, password, role } = req.body;
+  const { role } = req.body;
+
+  // ✅ FIX: Suppression des espaces dans le numéro de téléphone
+  const phone = req.body.phone ? req.body.phone.replace(/\s/g, '') : req.body.phone;
+  const password = req.body.password;
+  req.body.phone = phone; // Mettre à jour req.body avec la valeur nettoyée
+
   const errors = [];
 
   // Vérifier le téléphone
@@ -71,7 +77,11 @@ exports.validateRegistration = (req, res, next) => {
 
 // Middleware de validation de connexion
 exports.validateLogin = (req, res, next) => {
-  const { phone, password } = req.body;
+  // ✅ FIX: Suppression des espaces dans le numéro de téléphone
+  const phone = req.body.phone ? req.body.phone.replace(/\s/g, '') : req.body.phone;
+  const password = req.body.password;
+  req.body.phone = phone; // Mettre à jour req.body avec la valeur nettoyée
+
   const errors = [];
 
   if (!phone) {
