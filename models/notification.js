@@ -21,17 +21,17 @@ module.exports = (sequelize, DataTypes) => {
     },
     type: {
       type: DataTypes.ENUM(
-        'new_order',           // Nouvelle commande reçue
-        'order_accepted',      // Commande acceptée
-        'order_rejected',      // Commande rejetée
-        'order_completed',     // Commande complétée
-        'order_cancelled',     // Commande annulée
-        'stock_alert',         // Alerte stock faible/rupture
-        'subscription_expiring', // Abonnement expire bientôt
-        'subscription_expired',  // Abonnement expiré
-        'grace_period',        // Période de grâce
-        'review_received',     // Nouvel avis reçu
-        'system'              // Notification système
+        'new_order',
+        'order_accepted',
+        'order_rejected',
+        'order_completed',
+        'order_cancelled',
+        'stock_alert',
+        'subscription_expiring',
+        'subscription_expired',
+        'grace_period',
+        'review_received',
+        'system'
       ),
       allowNull: false
     },
@@ -79,24 +79,20 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'notifications',
     timestamps: true,
     indexes: [
-      {
-        fields: ['userId']
-      },
-      {
-        fields: ['isRead']
-      },
-      {
-        fields: ['type']
-      },
-      {
-        fields: ['createdAt']
-      }
+      { fields: ['userId'] },
+      { fields: ['isRead'] },
+      { fields: ['type'] },
+      { fields: ['createdAt'] }
     ]
   });
 
   Notification.associate = (models) => {
     Notification.belongsTo(models.User, {
-      foreignKey: 'userId',
+      foreignKey: {
+        name: 'userId',
+        onDelete: 'CASCADE',  // ✅ Supprime automatiquement quand l'user est supprimé
+        onUpdate: 'CASCADE'
+      },
       as: 'user'
     });
   };
