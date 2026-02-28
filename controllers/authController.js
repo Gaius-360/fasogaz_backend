@@ -1,6 +1,7 @@
 // ==========================================
 // FICHIER: controllers/authController.js
 // ✅ VERSION SANS OTP À L'INSCRIPTION - Connexion directe après register
+// ✅ VALIDATION GPS POUR LES CLIENTS UNIQUEMENT
 // ==========================================
 
 const bcrypt = require('bcryptjs');
@@ -11,6 +12,7 @@ const ResponseHandler = require('../utils/responseHandler');
 const sendSMS = require('../utils/sendSMS');
 const generateOTP = require('../utils/generateOTP');
 const { initFreeTrialIfNeeded } = require('../middleware/subscriptionMiddleware');
+const { validateLocationForCity } = require('../utils/locationValidator');
 
 // @desc    Inscription
 // @route   POST /api/auth/register
@@ -27,7 +29,10 @@ exports.register = async (req, res) => {
       quarter,
       businessName,
       businessAddress,
-      token // ✅ Token d'invitation pour revendeur
+      token, // ✅ Token d'invitation pour revendeur
+      latitude,
+      longitude,
+      locationVerified
     } = req.body;
 
     console.log('📝 Inscription demandée:', { phone, role, hasToken: !!token });
@@ -41,6 +46,41 @@ exports.register = async (req, res) => {
     const existingUser = await db.User.findOne({ where: { phone } });
     if (existingUser) {
       return ResponseHandler.error(res, 'Ce numéro est déjà enregistré', 400);
+    }
+
+    // ==========================================
+    // ✅ VALIDATION GPS POUR LES CLIENTS UNIQUEMENT
+    // ==========================================
+    if (role === 'client') {
+      // Exiger les coordonnées GPS
+      if (!locationVerified || latitude === undefined || longitude === undefined) {
+        return ResponseHandler.error(
+          res,
+          'La vérification de votre position GPS est requise pour s\'inscrire.',
+          400
+        );
+      }
+
+      if (!city) {
+        return ResponseHandler.error(res, 'La ville est requise', 400);
+      }
+
+      // Valider que les coordonnées correspondent à la ville déclarée
+      const locationCheck = validateLocationForCity(latitude, longitude, city);
+
+      if (!locationCheck.valid) {
+        console.warn(`❌ Inscription refusée - Position GPS invalide: ${locationCheck.message}`, {
+          phone,
+          city,
+          latitude,
+          longitude,
+          distance: locationCheck.distance
+        });
+
+        return ResponseHandler.error(res, locationCheck.message, 403);
+      }
+
+      console.log(`✅ Position GPS validée pour ${phone} à ${city} (${locationCheck.distance} km)`);
     }
 
     // ✅ Plus besoin d'OTP à l'inscription — compte vérifié directement
