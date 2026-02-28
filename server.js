@@ -113,7 +113,7 @@ db.sequelize.authenticate()
   .then(() => {
     console.log('✅ Connexion MySQL établie avec succès');
     
-    db.sequelize.sync({ alter: true }).then(() => {
+    db.sequelize.sync({ alter: false }).then(() => {
       console.log('✅ Modèles synchronisés');
     });
 
