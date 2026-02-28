@@ -110,7 +110,7 @@ exports.createAgent = async (req, res) => {
       'Agent créé avec succès',
       {
         id: agent.id,
-        agentCode: extractAgentCode(agent), // ← SAFE
+        agentCode: extractAgentCode(agent),
         phone: agent.phone,
         firstName: agent.firstName,
         lastName: agent.lastName,
@@ -151,10 +151,9 @@ exports.getAllAgents = async (req, res) => {
 
     const offset = (page - 1) * limit;
 
-    // ✅ Récupération SANS filtre d'attributs pour tout avoir
     const { count, rows: agents } = await db.User.findAndCountAll({
       where,
-      raw: false, // Important: obtenir les instances Sequelize
+      raw: false,
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset
@@ -179,7 +178,6 @@ exports.getAllAgents = async (req, res) => {
           }
         });
 
-        // ✅ Construction ULTRA-SAFE avec extraction sécurisée
         const safeAgentCode = extractAgentCode(agent);
         
         console.log(`🔍 Agent ${agent.id} - Code extrait: ${safeAgentCode}`);
@@ -190,7 +188,7 @@ exports.getAllAgents = async (req, res) => {
           firstName: agent.firstName,
           lastName: agent.lastName,
           email: agent.email,
-          agentCode: safeAgentCode, // ← ULTRA SAFE
+          agentCode: safeAgentCode,
           agentZone: agent.agentZone,
           isAgentActive: agent.isAgentActive,
           isActive: agent.isActive,
@@ -277,7 +275,7 @@ exports.getAgentById = async (req, res) => {
         firstName: agent.firstName,
         lastName: agent.lastName,
         email: agent.email,
-        agentCode: extractAgentCode(agent), // ← SAFE
+        agentCode: extractAgentCode(agent),
         agentZone: agent.agentZone,
         isAgentActive: agent.isAgentActive,
         isActive: agent.isActive,
@@ -334,7 +332,7 @@ exports.updateAgent = async (req, res) => {
       'Agent mis à jour avec succès',
       {
         id: agent.id,
-        agentCode: extractAgentCode(agent), // ← SAFE
+        agentCode: extractAgentCode(agent),
         firstName: agent.firstName,
         lastName: agent.lastName,
         email: agent.email,
@@ -392,7 +390,7 @@ exports.toggleAgentStatus = async (req, res) => {
       `Agent ${status} avec succès`,
       {
         id: agent.id,
-        agentCode: extractAgentCode(agent), // ← SAFE
+        agentCode: extractAgentCode(agent),
         isAgentActive: agent.isAgentActive
       }
     );
@@ -408,16 +406,14 @@ exports.toggleAgentStatus = async (req, res) => {
 
 /**
  * Supprimer un agent
+ * ✅ FIX COMPLET: Suppression de toutes les données liées avant destroy
  */
 exports.deleteAgent = async (req, res) => {
   try {
     const { id } = req.params;
 
     const agent = await db.User.findOne({
-      where: {
-        id,
-        role: 'agent'
-      }
+      where: { id, role: 'agent' }
     });
 
     if (!agent) {
@@ -425,10 +421,7 @@ exports.deleteAgent = async (req, res) => {
     }
 
     const activeInvitations = await db.InvitationToken.count({
-      where: {
-        generatedBy: agent.id,
-        status: 'active'
-      }
+      where: { generatedBy: agent.id, status: 'active' }
     });
 
     if (activeInvitations > 0) {
@@ -440,19 +433,48 @@ exports.deleteAgent = async (req, res) => {
     }
 
     const agentCode = extractAgentCode(agent);
+
+    // ✅ Suppression sécurisée de chaque table liée
+    // Ne plante pas si le modèle Sequelize n'existe pas
+    const safeDestroy = async (model, where) => {
+      try {
+        if (db[model]) {
+          await db[model].destroy({ where });
+        }
+      } catch (e) {
+        console.warn(`⚠️ Impossible de supprimer ${model}:`, e.message);
+      }
+    };
+
+    // Supprimer dans l'ordre (tables enfants d'abord)
+    await safeDestroy('Notification',    { userId: agent.id });
+    await safeDestroy('InvitationToken', { generatedBy: agent.id });
+    await safeDestroy('Subscription',    { userId: agent.id });
+    await safeDestroy('Order',           { customerId: agent.id });
+    await safeDestroy('Order',           { sellerId: agent.id });
+    await safeDestroy('Review',          { customerId: agent.id });
+    await safeDestroy('Review',          { sellerId: agent.id });
+    await safeDestroy('Address',         { userId: agent.id });
+    await safeDestroy('Product',         { sellerId: agent.id });
+
+    // Supprimer l'agent
     await agent.destroy();
 
-    console.log(`✅ Agent ${agentCode} supprimé`);
+    console.log(`✅ Agent ${agentCode} supprimé avec toutes ses données liées`);
 
-    return ResponseHandler.success(
-      res,
-      'Agent supprimé avec succès'
-    );
+    return ResponseHandler.success(res, 'Agent supprimé avec succès');
+
   } catch (error) {
     console.error('❌ Erreur suppression agent:', error);
+
+    // Log détaillé pour identifier une éventuelle FK manquante
+    if (error.name === 'SequelizeForeignKeyConstraintError') {
+      console.error(`🔍 Table FK bloquante: ${error.table} | Champ: ${error.fields} | Index: ${error.index}`);
+    }
+
     return ResponseHandler.error(
       res,
-      'Erreur lors de la suppression',
+      error.message || 'Erreur lors de la suppression',
       500
     );
   }

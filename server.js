@@ -90,7 +90,6 @@ app.use('/api/admin/pricing', require('./routes/adminPricingRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/invitations', require('./routes/invitationRoutes'));
 app.use('/api/auth', require('./routes/sellerAuthRoutes'));
-app.use('/api/admin/agents', require('./routes/agentManagementRoutes'));
 app.use('/api/agent/auth', require('./routes/agentAuthRoutes'));
 app.use('/api/payments', require('./routes/paymentRoutes'));
 app.use('/api/geocoding', require('./routes/geocodingRoutes'));

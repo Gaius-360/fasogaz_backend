@@ -10,6 +10,7 @@ const adminAuthController = require('../controllers/adminAuthController');
 const adminSettingsController = require('../controllers/adminSettingsController');
 const adminWalletController = require('../controllers/adminWalletController');
 const transactionController = require('../controllers/transactionController');
+const agentController = require('../controllers/agentManagementController'); // ✅ AJOUT
 const { protectAdmin } = require('../middleware/adminAuth');
 
 // ============================================
@@ -63,6 +64,18 @@ router.get('/clients/:id', adminController.getClientById);
 router.put('/clients/:id/block', adminController.blockClient);
 router.put('/clients/:id/unblock', adminController.unblockClient);
 router.delete('/clients/:id', adminController.deleteClient);
+
+// ==========================================
+// GESTION DES AGENTS ✅ DÉPLACÉ ICI (depuis agentManagementRoutes.js)
+// ⚠️ Routes spécifiques AVANT les routes avec paramètre /:id
+// ==========================================
+router.get('/agents', agentController.getAllAgents);
+router.post('/agents', agentController.createAgent);
+router.get('/agents/:id', agentController.getAgentById);
+router.put('/agents/:id/toggle-status', agentController.toggleAgentStatus);
+router.put('/agents/:id/regenerate-code', agentController.regenerateAgentCode);
+router.put('/agents/:id', agentController.updateAgent);
+router.delete('/agents/:id', agentController.deleteAgent);
 
 // ==========================================
 // GESTION DES PRODUITS
