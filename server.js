@@ -111,7 +111,7 @@ const PORT = process.env.PORT || 5000;
 
 db.sequelize.authenticate()
   .then(() => {
-    console.log('✅ Connexion MySQL établie avec succès');
+    console.log('✅ Connexion PostgreSQL établie avec succès');
     
     db.sequelize.sync({ alter: false }).then(() => {
       console.log('✅ Modèles synchronisés');
