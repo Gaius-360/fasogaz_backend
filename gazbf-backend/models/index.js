@@ -5,7 +5,7 @@
 
 const { Sequelize, DataTypes } = require('sequelize');
 const config = require('../config/database');
-const adminWithdrawal = require('./adminWithdrawal');
+
 
 const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
@@ -20,7 +20,8 @@ const sequelize = new Sequelize(
     port: dbConfig.port,
     dialect: dbConfig.dialect,
     logging: dbConfig.logging,
-    pool: dbConfig.pool
+    pool: dbConfig.pool,
+    dialectOptions: dbConfig.dialectOptions
   }
 );
 
