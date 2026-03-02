@@ -20,7 +20,8 @@ const sequelize = new Sequelize(
     port: dbConfig.port,
     dialect: dbConfig.dialect,
     logging: dbConfig.logging,
-    pool: dbConfig.pool
+    pool: dbConfig.pool,
+    dialectOptions: dbConfig.dialectOptions
   }
 );
 
