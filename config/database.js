@@ -13,7 +13,7 @@ module.exports = {
     dialectOptions: {
       ssl: {
         require: true,
-        rejectUnauthorized: false // ✅ Neon utilise SSL aussi
+        rejectUnauthorized: false 
       }
     }
   },
