@@ -103,7 +103,7 @@ app.use((req, res) => {
   });
 });
 
-// Middleware de gestion des erreurs
+
 app.use(errorHandler);
 
 // Connexion à la base de données et démarrage du serveur
