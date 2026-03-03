@@ -5,14 +5,22 @@
 const PushService = require('./pushService');
 
 // ── Helper interne ────────────────────────────────────────────
-// Crée la notification en BDD ET envoie le push en parallèle
+// Crée la notification en BDD ET envoie le push en séquence
 async function createNotif(data) {
   const db = require('../models');
   const notification = await db.Notification.create(data);
 
-  // Push en arrière-plan — ne bloque jamais si ça échoue
-  PushService.sendToUser(data.userId, PushService.buildPayload(notification))
-    .catch((err) => console.error('[Push] Erreur envoi:', err));
+  // ✅ FIX : await explicite au lieu de fire-and-forget
+  // Le .catch() précédent absorbait silencieusement les erreurs sans garantir
+  // que l'envoi avait eu lieu. Avec await, on s'assure que le push est tenté
+  // avant de retourner, et les erreurs sont loguées proprement.
+  try {
+    await PushService.sendToUser(data.userId, PushService.buildPayload(notification));
+  } catch (err) {
+    console.error('[Push] Erreur envoi:', err);
+    // On ne propage pas l'erreur — la notification BDD est créée,
+    // le push est best-effort et ne doit pas faire échouer la transaction.
+  }
 
   return notification;
 }
@@ -29,8 +37,8 @@ class NotificationService {
       const db = this.getDb();
       const orderWithDetails = await db.Order.findByPk(order.id, {
         include: [
-          { model: db.User, as: 'customer', attributes: ['firstName', 'lastName', 'phone'] },
-          { model: db.OrderItem, as: 'items', include: [{ model: db.Product, as: 'product' }] },
+          { model: db.User,      as: 'customer', attributes: ['firstName', 'lastName', 'phone'] },
+          { model: db.OrderItem, as: 'items',    include: [{ model: db.Product, as: 'product' }] },
         ],
       });
 
