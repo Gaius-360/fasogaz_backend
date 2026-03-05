@@ -1,6 +1,7 @@
 // ==========================================
 // FICHIER: routes/adminRoutes.js (VERSION CORRIGÉE)
 // Routes d'administration avec gestion transactions et portefeuille
+// ✅ AJOUT: Route reset-password utilisateur
 // ==========================================
 
 const express = require('express');
@@ -10,7 +11,7 @@ const adminAuthController = require('../controllers/adminAuthController');
 const adminSettingsController = require('../controllers/adminSettingsController');
 const adminWalletController = require('../controllers/adminWalletController');
 const transactionController = require('../controllers/transactionController');
-const agentController = require('../controllers/agentManagementController'); // ✅ AJOUT
+const agentController = require('../controllers/agentManagementController');
 const { protectAdmin } = require('../middleware/adminAuth');
 
 // ============================================
@@ -38,10 +39,16 @@ router.get('/stats/top-sellers', adminController.getTopSellers);
 
 // ==========================================
 // GESTION DES UTILISATEURS
+// ⚠️ Routes spécifiques AVANT les routes avec paramètre /:id
 // ==========================================
 router.get('/users', adminController.getAllUsers);
 router.get('/users/:id', adminController.getUserById);
 router.put('/users/:id/toggle-status', adminController.toggleUserStatus);
+
+// ✅ NOUVEAU: Réinitialiser le mot de passe d'un utilisateur (tous rôles)
+// Utilisé par l'admin après vérification d'identité via WhatsApp
+router.put('/users/:id/reset-password', adminController.resetUserPassword);
+
 router.delete('/users/:id', adminController.deleteUser);
 
 // ==========================================
@@ -66,7 +73,7 @@ router.put('/clients/:id/unblock', adminController.unblockClient);
 router.delete('/clients/:id', adminController.deleteClient);
 
 // ==========================================
-// GESTION DES AGENTS ✅ DÉPLACÉ ICI (depuis agentManagementRoutes.js)
+// GESTION DES AGENTS
 // ⚠️ Routes spécifiques AVANT les routes avec paramètre /:id
 // ==========================================
 router.get('/agents', agentController.getAllAgents);
@@ -96,36 +103,22 @@ router.get('/subscriptions', adminController.getAllSubscriptions);
 router.get('/subscriptions/expiring', adminController.getExpiringSubscriptions);
 
 // ==========================================
-// GESTION DES TRANSACTIONS (UNIFIÉ)
-// ✅ CORRECTION: Routes spécifiques AVANT les routes avec paramètres
+// GESTION DES TRANSACTIONS
+// ✅ Routes spécifiques AVANT les routes avec paramètres
 // ==========================================
-
-// ✅ Routes spécifiques d'abord
 router.get('/transactions/stats', transactionController.getTransactionStats);
 router.get('/transactions/export', transactionController.exportTransactions);
-
-// ✅ Routes génériques après
 router.get('/transactions', transactionController.getAllTransactions);
 router.get('/transactions/:id', transactionController.getTransactionById);
-
-// ✅ Actions sur les transactions
 router.put('/transactions/:id/validate', transactionController.validateTransaction);
 router.put('/transactions/:id/cancel', transactionController.cancelTransaction);
 
 // ==========================================
 // PORTEFEUILLE ADMIN
 // ==========================================
-
-// Solde et détails
 router.get('/wallet/balance', adminWalletController.getWalletBalance);
-
-// Historique des retraits
 router.get('/wallet/withdrawals', adminWalletController.getWithdrawals);
-
-// Demander un retrait
 router.post('/wallet/withdraw', adminWalletController.requestWithdrawal);
-
-// Statistiques du portefeuille
 router.get('/wallet/stats', adminWalletController.getWalletStats);
 
 // ==========================================
@@ -133,12 +126,8 @@ router.get('/wallet/stats', adminWalletController.getWalletStats);
 // ==========================================
 router.get('/settings', adminSettingsController.getSettings);
 router.put('/settings', adminSettingsController.updateSettings);
-
-// Tarification
 router.get('/settings/pricing', adminSettingsController.getPricing);
 router.put('/settings/pricing', adminSettingsController.updatePricing);
-
-// Maintenance
 router.post('/settings/maintenance', adminSettingsController.toggleMaintenance);
 
 // ==========================================

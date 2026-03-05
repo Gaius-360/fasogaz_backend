@@ -1,6 +1,7 @@
 // ==========================================
 // FICHIER: controllers/adminController.js
-// ✅ CORRECTIONS: Revenus par source + getRevenueChart + newSellers
+// ✅ AJOUT: resetUserPassword — réinitialisation MDP par l'admin
+//           (flux WhatsApp support : pas d'OTP côté utilisateur)
 // ==========================================
 
 const db = require('../models');
@@ -16,40 +17,28 @@ const ResponseHandler = require('../utils/responseHandler');
 // @access  Private (admin)
 exports.getDashboardStats = async (req, res) => {
   try {
-    // Utilisateurs
     const totalUsers = await db.User.count();
     const clients = await db.User.count({ where: { role: 'client' } });
     const sellers = await db.User.count({ where: { role: 'revendeur' } });
-    
-    // Nouveaux utilisateurs ce mois
+
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
-    
+
     const newThisMonth = await db.User.count({
-      where: {
-        createdAt: { [Op.gte]: startOfMonth }
-      }
+      where: { createdAt: { [Op.gte]: startOfMonth } }
     });
 
-    // ✅ AJOUT: Nouveaux revendeurs ce mois
     const newSellersThisMonth = await db.User.count({
-      where: {
-        role: 'revendeur',
-        createdAt: { [Op.gte]: startOfMonth }
-      }
+      where: { role: 'revendeur', createdAt: { [Op.gte]: startOfMonth } }
     });
 
-    // Croissance utilisateurs (mois dernier vs ce mois)
     const startOfLastMonth = new Date(startOfMonth);
     startOfLastMonth.setMonth(startOfLastMonth.getMonth() - 1);
-    
+
     const lastMonthUsers = await db.User.count({
       where: {
-        createdAt: {
-          [Op.gte]: startOfLastMonth,
-          [Op.lt]: startOfMonth
-        }
+        createdAt: { [Op.gte]: startOfLastMonth, [Op.lt]: startOfMonth }
       }
     });
 
@@ -57,37 +46,26 @@ exports.getDashboardStats = async (req, res) => {
       ? Math.round(((newThisMonth - lastMonthUsers) / lastMonthUsers) * 100)
       : 100;
 
-    // Abonnements — total
     const activeSubscriptions = await db.Subscription.count({
       where: { isActive: true }
     });
 
-    // Abonnements actifs clients — jointure User car planType ne contient
-    // pas 'client'/'seller', c'est le rôle de l'utilisateur qui fait foi
     const activeClientSubs = await db.Subscription.count({
       where: { isActive: true },
       include: [{
-        model: db.User,
-        as: 'user',
-        where: { role: 'client' },
-        attributes: [],
-        required: true
+        model: db.User, as: 'user',
+        where: { role: 'client' }, attributes: [], required: true
       }]
     });
 
-    // Abonnements actifs revendeurs
     const activeSellerSubs = await db.Subscription.count({
       where: { isActive: true },
       include: [{
-        model: db.User,
-        as: 'user',
-        where: { role: 'revendeur' },
-        attributes: [],
-        required: true
+        model: db.User, as: 'user',
+        where: { role: 'revendeur' }, attributes: [], required: true
       }]
     });
 
-    // Abonnements expirant dans 3 jours
     const in3Days = new Date();
     in3Days.setDate(in3Days.getDate() + 3);
 
@@ -98,38 +76,26 @@ exports.getDashboardStats = async (req, res) => {
       }
     });
 
-    // Taux d'abonnement
     const clientRate = clients > 0 ? Math.round((activeClientSubs / clients) * 100) : 0;
     const sellerRate = sellers > 0 ? Math.round((activeSellerSubs / sellers) * 100) : 0;
 
-    // Commandes
     const totalOrders = await db.Order.count();
-    
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
+
     const ordersToday = await db.Order.count({
-      where: {
-        createdAt: {
-          [Op.gte]: today,
-          [Op.lt]: tomorrow
-        }
-      }
+      where: { createdAt: { [Op.gte]: today, [Op.lt]: tomorrow } }
     });
 
-    const completedOrders = await db.Order.count({
-      where: { status: 'completed' }
-    });
+    const completedOrders = await db.Order.count({ where: { status: 'completed' } });
 
     const successRate = totalOrders > 0
       ? Math.round((completedOrders / totalOrders) * 100)
       : 0;
 
-    // Revenus globaux — depuis les transactions complétées (tous types)
-    // Les vrais types ENUM sont : seller_subscription, seller_subscription_renewal,
-    // seller_early_renewal, client_access, order_payment
     const allCompletedTxns = await db.Transaction.findAll({
       where: { status: 'completed' },
       attributes: ['amount', 'createdAt']
@@ -161,10 +127,6 @@ exports.getDashboardStats = async (req, res) => {
       })
       .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
 
-    // Revenus par source — abonnements clients vs revendeurs
-    // Types ENUM réels : 'seller_subscription', 'seller_subscription_renewal',
-    // 'seller_early_renewal' pour les revendeurs ; 'client_access' pour les clients.
-    // On utilise le rôle de l'utilisateur joint pour distinguer les deux sources.
     const subscriptionTransactions = await db.Transaction.findAll({
       where: {
         status: 'completed',
@@ -178,43 +140,32 @@ exports.getDashboardStats = async (req, res) => {
         }
       },
       include: [{
-        model: db.User,
-        as: 'user',
+        model: db.User, as: 'user',
         attributes: ['role'],
-        required: false  // LEFT JOIN — garder les transactions même si user supprimé
+        required: false
       }]
     });
 
-    // Revenus abonnements clients (type client_access)
     const clientRevenue = subscriptionTransactions
       .filter(t => t.user && t.user.role === 'client')
       .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
 
-    // Revenus abonnements revendeurs (seller_subscription + renouvellements)
     const sellerRevenue = subscriptionTransactions
       .filter(t => t.user && t.user.role === 'revendeur')
       .reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
 
-    // Validation revendeurs
     const pendingValidation = await db.User.count({
-      where: {
-        role: 'revendeur',
-        validationStatus: 'pending'
-      }
+      where: { role: 'revendeur', validationStatus: 'pending' }
     });
 
     const validatedSellers = await db.User.count({
-      where: {
-        role: 'revendeur',
-        validationStatus: 'approved'
-      }
+      where: { role: 'revendeur', validationStatus: 'approved' }
     });
 
     const validationRate = sellers > 0
       ? Math.round((validatedSellers / sellers) * 100)
       : 0;
 
-    // Alertes critiques
     const criticalAlerts = [];
 
     if (pendingValidation > 5) {
@@ -233,14 +184,13 @@ exports.getDashboardStats = async (req, res) => {
       });
     }
 
-    // Construire la réponse
     const stats = {
       users: {
         total: totalUsers,
         clients,
         sellers,
         newThisMonth,
-        newSellers: newSellersThisMonth, // ✅ AJOUT
+        newSellers: newSellersThisMonth,
         growth: userGrowth
       },
       subscriptions: {
@@ -263,8 +213,8 @@ exports.getDashboardStats = async (req, res) => {
         today: todayRevenue,
         growth: revenueGrowth,
         bySource: {
-          clients: clientRevenue,   // ✅ CORRIGÉ
-          sellers: sellerRevenue    // ✅ CORRIGÉ
+          clients: clientRevenue,
+          sellers: sellerRevenue
         }
       },
       validation: {
@@ -277,11 +227,7 @@ exports.getDashboardStats = async (req, res) => {
       }
     };
 
-    return ResponseHandler.success(
-      res,
-      'Statistiques récupérées',
-      stats
-    );
+    return ResponseHandler.success(res, 'Statistiques récupérées', stats);
   } catch (error) {
     console.error('Erreur récupération stats:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -311,9 +257,7 @@ exports.getTopSellers = async (req, res) => {
     const sellerMap = {};
     completedOrders.forEach(order => {
       const id = order.sellerId;
-      if (!sellerMap[id]) {
-        sellerMap[id] = { revenue: 0, orders: 0 };
-      }
+      if (!sellerMap[id]) sellerMap[id] = { revenue: 0, orders: 0 };
       sellerMap[id].revenue += parseFloat(order.total || 0);
       sellerMap[id].orders += 1;
     });
@@ -328,10 +272,7 @@ exports.getTopSellers = async (req, res) => {
     }
 
     const sellers = await db.User.findAll({
-      where: {
-        id: { [Op.in]: topIds },
-        role: 'revendeur'
-      },
+      where: { id: { [Op.in]: topIds }, role: 'revendeur' },
       attributes: ['id', 'businessName', 'quarter', 'city']
     });
 
@@ -357,7 +298,6 @@ exports.getTopSellers = async (req, res) => {
 // @desc    Obtenir le graphique des revenus
 // @route   GET /api/admin/stats/revenue
 // @access  Private (admin)
-// ✅ Retourne { date, clients, sellers } basé sur les abonnements uniquement
 exports.getRevenueChart = async (req, res) => {
   try {
     const { period = '30days' } = req.query;
@@ -367,7 +307,6 @@ exports.getRevenueChart = async (req, res) => {
     else if (period === '30days') startDate.setDate(startDate.getDate() - 30);
     else if (period === '90days') startDate.setDate(startDate.getDate() - 90);
 
-    // Transactions d'abonnements complétées — types ENUM réels du modèle Transaction
     const transactions = await db.Transaction.findAll({
       where: {
         status: 'completed',
@@ -381,25 +320,19 @@ exports.getRevenueChart = async (req, res) => {
         },
         createdAt: { [Op.gte]: startDate }
       },
-      include: [
-        {
-          model: db.User,
-          as: 'user',
-          attributes: ['role'],
-          required: false  // LEFT JOIN
-        }
-      ],
+      include: [{
+        model: db.User, as: 'user',
+        attributes: ['role'],
+        required: false
+      }],
       order: [['createdAt', 'ASC']]
     });
 
-    // Grouper par jour ET par rôle utilisateur
     const revenueByDay = {};
 
     transactions.forEach(t => {
       const date = new Date(t.createdAt).toLocaleDateString('fr-FR');
-      if (!revenueByDay[date]) {
-        revenueByDay[date] = { date, clients: 0, sellers: 0 };
-      }
+      if (!revenueByDay[date]) revenueByDay[date] = { date, clients: 0, sellers: 0 };
       const amount = parseFloat(t.amount || 0);
       if (t.user?.role === 'client') {
         revenueByDay[date].clients += amount;
@@ -408,18 +341,13 @@ exports.getRevenueChart = async (req, res) => {
       }
     });
 
-    // Trier par date chronologique (format fr-FR : dd/mm/yyyy)
     const chartData = Object.values(revenueByDay).sort((a, b) => {
       const [da, ma, ya] = a.date.split('/').map(Number);
       const [db2, mb, yb] = b.date.split('/').map(Number);
       return new Date(ya, ma - 1, da) - new Date(yb, mb - 1, db2);
     });
 
-    return ResponseHandler.success(
-      res,
-      'Données de revenus récupérées',
-      chartData
-    );
+    return ResponseHandler.success(res, 'Données de revenus récupérées', chartData);
   } catch (error) {
     console.error('Erreur graphique revenus:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -435,11 +363,7 @@ exports.getAllUsers = async (req, res) => {
     const { role, search, page = 1, limit = 20 } = req.query;
 
     const where = {};
-    
-    if (role) {
-      where.role = role;
-    }
-
+    if (role) where.role = role;
     if (search) {
       where[Op.or] = [
         { phone: { [Op.like]: `%${search}%` } },
@@ -454,30 +378,21 @@ exports.getAllUsers = async (req, res) => {
     const { count, rows: users } = await db.User.findAndCountAll({
       where,
       attributes: { exclude: ['password'] },
-      include: [
-        {
-          model: db.Subscription,
-          as: 'subscription'
-        }
-      ],
+      include: [{ model: db.Subscription, as: 'subscription' }],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset
     });
 
-    return ResponseHandler.success(
-      res,
-      'Utilisateurs récupérés',
-      {
-        users,
-        pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(count / limit),
-          totalItems: count,
-          itemsPerPage: parseInt(limit)
-        }
+    return ResponseHandler.success(res, 'Utilisateurs récupérés', {
+      users,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,
+        itemsPerPage: parseInt(limit)
       }
-    );
+    });
   } catch (error) {
     console.error('Erreur récupération utilisateurs:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -514,10 +429,7 @@ exports.toggleUserStatus = async (req, res) => {
     const { id } = req.params;
 
     const user = await db.User.findByPk(id);
-
-    if (!user) {
-      return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
-    }
+    if (!user) return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
 
     await user.update({ isActive: !user.isActive });
 
@@ -532,15 +444,67 @@ exports.toggleUserStatus = async (req, res) => {
   }
 };
 
-exports.deleteUser = async (req, res) => {
+// ==========================================
+// ✅ NOUVEAU: Réinitialiser le mot de passe utilisateur
+// @desc    L'admin réinitialise le MDP après vérification d'identité via WhatsApp
+// @route   PUT /api/admin/users/:id/reset-password
+// @access  Private (admin)
+// ==========================================
+exports.resetUserPassword = async (req, res) => {
   try {
     const { id } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+      return ResponseHandler.error(
+        res,
+        'Le mot de passe doit contenir au moins 6 caractères',
+        400
+      );
+    }
 
     const user = await db.User.findByPk(id);
 
     if (!user) {
       return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
     }
+
+    // Le hook beforeUpdate du modèle User hashera automatiquement le mot de passe
+    await user.update({
+      password: newPassword,
+      otp: null,
+      otpExpiry: null
+    });
+
+    console.log(
+      `✅ Mot de passe réinitialisé par admin pour: ${user.phone} (${user.role})`
+    );
+
+    // Notifier l'utilisateur dans l'app
+    await db.Notification.create({
+      userId: user.id,
+      type: 'system',
+      title: '🔐 Mot de passe réinitialisé',
+      message:
+        'Votre mot de passe a été réinitialisé par le support FasoGaz. ' +
+        'Connectez-vous avec votre nouveau mot de passe temporaire, ' +
+        'puis changez-le depuis votre profil.',
+      priority: 'high'
+    });
+
+    return ResponseHandler.success(res, 'Mot de passe réinitialisé avec succès');
+  } catch (error) {
+    console.error('❌ Erreur resetUserPassword:', error);
+    return ResponseHandler.error(res, 'Erreur lors de la réinitialisation', 500);
+  }
+};
+
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await db.User.findByPk(id);
+    if (!user) return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
 
     await user.destroy();
 
@@ -589,8 +553,7 @@ exports.getClientById = async (req, res) => {
       include: [
         { model: db.User, as: 'seller', attributes: ['id', 'businessName', 'phone'] },
         {
-          model: db.OrderItem,
-          as: 'items',
+          model: db.OrderItem, as: 'items',
           include: [{ model: db.Product, as: 'product', attributes: ['bottleType', 'brand'] }]
         }
       ],
@@ -603,13 +566,21 @@ exports.getClientById = async (req, res) => {
     });
 
     const completedOrders = orders.filter(o => o.status === 'completed');
-    const totalSpent = completedOrders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
-    const avgOrderValue = completedOrders.length > 0 ? totalSpent / completedOrders.length : 0;
-    const completionRate = orders.length > 0
-      ? Math.round((completedOrders.length / orders.length) * 100)
-      : 0;
-    const accountAge = Math.max(1, Math.floor((Date.now() - new Date(client.createdAt)) / (30 * 86400000)));
-    const ordersPerMonth = orders.length > 0 ? (orders.length / accountAge).toFixed(1) : 0;
+    const totalSpent = completedOrders.reduce(
+      (sum, o) => sum + parseFloat(o.total || 0), 0
+    );
+    const avgOrderValue =
+      completedOrders.length > 0 ? totalSpent / completedOrders.length : 0;
+    const completionRate =
+      orders.length > 0
+        ? Math.round((completedOrders.length / orders.length) * 100)
+        : 0;
+    const accountAge = Math.max(
+      1,
+      Math.floor((Date.now() - new Date(client.createdAt)) / (30 * 86400000))
+    );
+    const ordersPerMonth =
+      orders.length > 0 ? (orders.length / accountAge).toFixed(1) : 0;
     const lastOrder = orders.length > 0 ? orders[0].createdAt : null;
 
     const stats = {
@@ -629,7 +600,11 @@ exports.getClientById = async (req, res) => {
       stats
     };
 
-    return ResponseHandler.success(res, 'Client récupéré avec statistiques complètes', responseData);
+    return ResponseHandler.success(
+      res,
+      'Client récupéré avec statistiques complètes',
+      responseData
+    );
   } catch (error) {
     console.error('❌ Erreur getClientById:', error);
     return ResponseHandler.error(res, error.message || 'Erreur lors de la récupération', 500);
@@ -712,9 +687,7 @@ exports.getAllSellers = async (req, res) => {
     const { status } = req.query;
 
     const where = { role: 'revendeur' };
-    if (status) {
-      where.validationStatus = status;
-    }
+    if (status) where.validationStatus = status;
 
     const sellers = await db.User.findAll({
       where,
@@ -740,13 +713,13 @@ exports.getSellerById = async (req, res) => {
     const seller = await db.User.findOne({
       where: { id, role: 'revendeur' },
       attributes: { exclude: ['password'] },
-      include: [
-        {
-          model: db.Product,
-          as: 'products',
-          attributes: ['id', 'bottleType', 'brand', 'price', 'quantity', 'status', 'viewCount', 'orderCount', 'createdAt']
-        }
-      ]
+      include: [{
+        model: db.Product, as: 'products',
+        attributes: [
+          'id', 'bottleType', 'brand', 'price', 'quantity',
+          'status', 'viewCount', 'orderCount', 'createdAt'
+        ]
+      }]
     });
 
     if (!seller) {
@@ -758,8 +731,7 @@ exports.getSellerById = async (req, res) => {
       include: [
         { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'phone'] },
         {
-          model: db.OrderItem,
-          as: 'items',
+          model: db.OrderItem, as: 'items',
           include: [{ model: db.Product, as: 'product', attributes: ['bottleType', 'brand'] }]
         }
       ],
@@ -795,42 +767,69 @@ exports.getSellerById = async (req, res) => {
         rejected: orders.filter(o => o.status === 'rejected').length
       },
       revenue: {
-        total: orders.filter(o => o.status === 'completed').reduce((sum, o) => sum + parseFloat(o.total || 0), 0),
+        total: orders
+          .filter(o => o.status === 'completed')
+          .reduce((sum, o) => sum + parseFloat(o.total || 0), 0),
         thisMonth: orders.filter(o => {
-          const orderDate = new Date(o.createdAt);
+          const d = new Date(o.createdAt);
           const now = new Date();
-          return o.status === 'completed' &&
-            orderDate.getMonth() === now.getMonth() &&
-            orderDate.getFullYear() === now.getFullYear();
+          return (
+            o.status === 'completed' &&
+            d.getMonth() === now.getMonth() &&
+            d.getFullYear() === now.getFullYear()
+          );
         }).reduce((sum, o) => sum + parseFloat(o.total || 0), 0),
         today: orders.filter(o => {
-          const orderDate = new Date(o.createdAt);
-          const today = new Date();
-          return o.status === 'completed' && orderDate.toDateString() === today.toDateString();
+          const d = new Date(o.createdAt);
+          return (
+            o.status === 'completed' &&
+            d.toDateString() === new Date().toDateString()
+          );
         }).reduce((sum, o) => sum + parseFloat(o.total || 0), 0),
-        average: orders.filter(o => o.status === 'completed').length > 0
-          ? orders.filter(o => o.status === 'completed').reduce((sum, o) => sum + parseFloat(o.total || 0), 0) /
-            orders.filter(o => o.status === 'completed').length
-          : 0
+        average: (() => {
+          const done = orders.filter(o => o.status === 'completed');
+          return done.length > 0
+            ? done.reduce((sum, o) => sum + parseFloat(o.total || 0), 0) / done.length
+            : 0;
+        })()
       },
       reviews: {
         total: reviews.length,
-        average: reviews.length > 0 ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length : 0,
+        average: reviews.length > 0
+          ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
+          : 0,
         withResponse: reviews.filter(r => r.sellerResponse).length,
         withoutResponse: reviews.filter(r => !r.sellerResponse).length,
         distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
       },
       performance: {
         orderCompletionRate: orders.length > 0
-          ? Math.round((orders.filter(o => o.status === 'completed').length / orders.length) * 100)
+          ? Math.round(
+              (orders.filter(o => o.status === 'completed').length / orders.length) * 100
+            )
           : 0,
+        orderAcceptanceRate: (() => {
+          const decided = orders.filter(
+            o => ['accepted', 'completed', 'rejected'].includes(o.status)
+          );
+          const accepted = orders.filter(
+            o => ['accepted', 'completed'].includes(o.status)
+          );
+          return decided.length > 0
+            ? Math.round((accepted.length / decided.length) * 100)
+            : null;
+        })(),
         averageRating: reviews.length > 0
           ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(2)
           : 0
       }
     };
 
-    reviews.forEach(r => { if (stats.reviews.distribution[r.rating] !== undefined) stats.reviews.distribution[r.rating]++; });
+    reviews.forEach(r => {
+      if (stats.reviews.distribution[r.rating] !== undefined) {
+        stats.reviews.distribution[r.rating]++;
+      }
+    });
 
     const responseData = {
       ...seller.toJSON(),
@@ -855,7 +854,11 @@ exports.getSellerById = async (req, res) => {
       }))
     };
 
-    return ResponseHandler.success(res, 'Revendeur récupéré avec statistiques complètes', responseData);
+    return ResponseHandler.success(
+      res,
+      'Revendeur récupéré avec statistiques complètes',
+      responseData
+    );
   } catch (error) {
     console.error('❌ Erreur getSellerById:', error);
     return ResponseHandler.error(res, error.message || 'Erreur lors de la récupération', 500);
@@ -867,10 +870,7 @@ exports.validateSeller = async (req, res) => {
     const { id } = req.params;
 
     const seller = await db.User.findOne({ where: { id, role: 'revendeur' } });
-
-    if (!seller) {
-      return ResponseHandler.error(res, 'Revendeur non trouvé', 404);
-    }
+    if (!seller) return ResponseHandler.error(res, 'Revendeur non trouvé', 404);
 
     await seller.update({ validationStatus: 'approved', rejectionReason: null });
 
@@ -878,7 +878,9 @@ exports.validateSeller = async (req, res) => {
       userId: seller.id,
       type: 'system',
       title: '✅ Profil approuvé',
-      message: 'Félicitations ! Votre profil a été validé. Vous pouvez maintenant commencer à vendre.',
+      message:
+        'Félicitations ! Votre profil a été validé. ' +
+        'Vous pouvez maintenant commencer à vendre.',
       priority: 'high',
       actionUrl: '/seller/dashboard'
     });
@@ -900,10 +902,7 @@ exports.rejectSeller = async (req, res) => {
     }
 
     const seller = await db.User.findOne({ where: { id, role: 'revendeur' } });
-
-    if (!seller) {
-      return ResponseHandler.error(res, 'Revendeur non trouvé', 404);
-    }
+    if (!seller) return ResponseHandler.error(res, 'Revendeur non trouvé', 404);
 
     await seller.update({ validationStatus: 'rejected', rejectionReason: reason });
 
@@ -1026,10 +1025,7 @@ exports.deleteProduct = async (req, res) => {
     const { id } = req.params;
 
     const product = await db.Product.findByPk(id);
-
-    if (!product) {
-      return ResponseHandler.error(res, 'Produit non trouvé', 404);
-    }
+    if (!product) return ResponseHandler.error(res, 'Produit non trouvé', 404);
 
     await product.destroy();
 
@@ -1094,9 +1090,7 @@ exports.getOrderById = async (req, res) => {
       ]
     });
 
-    if (!order) {
-      return ResponseHandler.error(res, 'Commande non trouvée', 404);
-    }
+    if (!order) return ResponseHandler.error(res, 'Commande non trouvée', 404);
 
     return ResponseHandler.success(res, 'Commande récupérée', order);
   } catch (error) {
@@ -1122,7 +1116,10 @@ exports.getAllSubscriptions = async (req, res) => {
     const { count, rows: subscriptions } = await db.Subscription.findAndCountAll({
       where,
       include: [
-        { model: db.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'phone', 'role', 'businessName'] },
+        {
+          model: db.User, as: 'user',
+          attributes: ['id', 'firstName', 'lastName', 'phone', 'role', 'businessName']
+        },
         { model: db.Transaction, as: 'transaction' }
       ],
       order: [['createdAt', 'DESC']],
@@ -1158,9 +1155,10 @@ exports.getExpiringSubscriptions = async (req, res) => {
         isActive: true,
         endDate: { [Op.between]: [now, futureDate] }
       },
-      include: [
-        { model: db.User, as: 'user', attributes: ['id', 'firstName', 'lastName', 'phone', 'role', 'businessName'] }
-      ],
+      include: [{
+        model: db.User, as: 'user',
+        attributes: ['id', 'firstName', 'lastName', 'phone', 'role', 'businessName']
+      }],
       order: [['endDate', 'ASC']]
     });
 
@@ -1200,13 +1198,16 @@ exports.getAllReviews = async (req, res) => {
 
     const stats = {
       total: allReviews.length,
-      average: allReviews.length > 0
-        ? allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length
-        : 0,
+      average:
+        allReviews.length > 0
+          ? allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length
+          : 0,
       distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
     };
 
-    allReviews.forEach(r => { if (stats.distribution[r.rating] !== undefined) stats.distribution[r.rating]++; });
+    allReviews.forEach(r => {
+      if (stats.distribution[r.rating] !== undefined) stats.distribution[r.rating]++;
+    });
 
     return ResponseHandler.success(res, 'Avis récupérés', {
       reviews,
@@ -1229,15 +1230,10 @@ exports.deleteReview = async (req, res) => {
     const { id } = req.params;
 
     const review = await db.Review.findByPk(id);
-
-    if (!review) {
-      return ResponseHandler.error(res, 'Avis non trouvé', 404);
-    }
+    if (!review) return ResponseHandler.error(res, 'Avis non trouvé', 404);
 
     const sellerId = review.sellerId;
-
     await review.destroy();
-
     await updateSellerRatingAdmin(sellerId);
 
     return ResponseHandler.success(res, 'Avis supprimé');
@@ -1286,7 +1282,7 @@ exports.broadcastNotification = async (req, res) => {
 };
 
 // ========================================
-// FONCTIONS HELPER
+// FONCTIONS HELPER (privées)
 // ========================================
 
 async function updateSellerRatingAdmin(sellerId) {
@@ -1297,7 +1293,10 @@ async function updateSellerRatingAdmin(sellerId) {
     });
 
     if (reviews.length === 0) {
-      await db.User.update({ averageRating: 0, totalReviews: 0 }, { where: { id: sellerId } });
+      await db.User.update(
+        { averageRating: 0, totalReviews: 0 },
+        { where: { id: sellerId } }
+      );
       return;
     }
 
@@ -1309,48 +1308,5 @@ async function updateSellerRatingAdmin(sellerId) {
     );
   } catch (error) {
     console.error('Erreur mise à jour rating:', error);
-  }
-}
-
-async function initializeFreeTrialsForExistingUsers(targetRole, freeTrialDays) {
-  try {
-    if (freeTrialDays <= 0) return;
-
-    const role = targetRole === 'revendeur' ? 'revendeur' : 'client';
-
-    const users = await db.User.findAll({
-      where: { role, hasUsedFreeTrial: false, freeTrialStartDate: null }
-    });
-
-    if (users.length === 0) return;
-
-    const now = new Date();
-    const endDate = new Date();
-    endDate.setDate(endDate.getDate() + freeTrialDays);
-
-    const updates = [];
-    const notifications = [];
-
-    for (const user of users) {
-      updates.push(user.update({ freeTrialStartDate: now, freeTrialEndDate: endDate, hasUsedFreeTrial: true }));
-      notifications.push({
-        userId: user.id,
-        type: 'system',
-        title: '🎁 Période d\'essai gratuite activée',
-        message: `Profitez de ${freeTrialDays} jours d'accès gratuit ! Votre période d'essai expire le ${endDate.toLocaleDateString('fr-FR')}.`,
-        priority: 'high',
-        isRead: false,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-    }
-
-    await Promise.all(updates);
-
-    if (notifications.length > 0) {
-      await db.Notification.bulkCreate(notifications);
-    }
-  } catch (error) {
-    console.error('❌ Erreur initialisation périodes d\'essai:', error);
   }
 }

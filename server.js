@@ -130,7 +130,7 @@ db.sequelize.authenticate()
       console.log(`${'='.repeat(60)}`);
       console.log(`📍 Port: ${PORT}`);
       console.log(`🌍 Environnement: ${process.env.NODE_ENV}`);
-      console.log(`💾 Base de données: MySQL`);
+      console.log(`💾 Base de données: postgres`);
       console.log(`🌐 Origins autorisées: ${allowedOrigins.join(', ')}`);
       console.log(`\n📡 Routes disponibles:\n`);
       console.log(`🔐 AUTH:`);
@@ -170,6 +170,6 @@ db.sequelize.authenticate()
     });
   })
   .catch(err => {
-    console.error('❌ Erreur de connexion à MySQL:', err.message);
+    console.error('❌ Erreur de connexion à PosgreSQL:', err.message);
     process.exit(1);
   });

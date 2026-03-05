@@ -10,12 +10,7 @@ module.exports = {
     dialect:  'postgres', // ✅ mysql → postgres
     logging:  false,
     pool: { max: 5, min: 0, acquire: 30000, idle: 10000 },
-    dialectOptions: {
-      ssl: {
-        require: true,
-        rejectUnauthorized: false 
-      }
-    }
+    dialectOptions: {}
   },
   production: {
     username: process.env.DB_USER,
