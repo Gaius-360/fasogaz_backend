@@ -94,9 +94,6 @@ app.use('/api/payments',       require('./routes/paymentRoutes'));
 app.use('/api/geocoding',      require('./routes/geocodingRoutes'));
 app.use('/api/push',           require('./routes/pushRoutes'));
 
-// ✅ Route setup — DOIT être avant le handler 404
-app.use('/setup',              require('./routes/setupRoutes'));
-
 // 404
 app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Route non trouvée' });
