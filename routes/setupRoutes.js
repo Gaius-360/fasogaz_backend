@@ -4,7 +4,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const db = require('../models');
 
-router.post('/create-admin', async (req, res) => {
+router.get('/create-admin', async (req, res) => {
   const secret = req.headers['x-setup-secret'];
   if (secret !== process.env.SETUP_SECRET) {
     return res.status(403).json({ error: 'Interdit' });
