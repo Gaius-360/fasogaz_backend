@@ -5,7 +5,7 @@
 //    - File d'attente Nominatim stricte 1.2s entre chaque appel
 //    - Sur 429 Nominatim : arrêt immédiat de la cascade, Retry-After header
 //    - Pas de cascade multi-zoom si zoom 18 retourne déjà un quartier
-//    - Rate limiter dédié 20 req/min (au lieu de 30) pour rester sous la limite
+//    - Rate limiter dédié 20 req/min (aligné avec rateLimiter.js)
 // ==========================================
 
 const express              = require('express');
