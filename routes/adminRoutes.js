@@ -14,21 +14,13 @@ const transactionController = require('../controllers/transactionController');
 const agentController = require('../controllers/agentManagementController');
 const { protectAdmin } = require('../middleware/adminAuth');
 
-// ============================================
-// ROUTES D'AUTHENTIFICATION ADMIN (PUBLIC)
-// ============================================
-router.post('/auth/login', adminAuthController.login);
+
 
 // ============================================
 // ROUTES PROTÉGÉES (ADMIN SEULEMENT)
 // ============================================
 router.use(protectAdmin);
 
-// ==========================================
-// AUTHENTIFICATION & PROFIL
-// ==========================================
-router.get('/auth/profile', adminAuthController.getProfile);
-router.put('/auth/change-password', adminAuthController.changePassword);
 
 // ==========================================
 // STATISTIQUES DASHBOARD
