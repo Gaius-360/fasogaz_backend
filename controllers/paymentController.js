@@ -1,11 +1,15 @@
 // ==========================================
 // FICHIER: controllers/paymentController.js
-// Gestion des paiements LigdiCash
+// ✅ Types acceptés :
+//    'subscription'        → abonnement revendeur
+//    'client_subscription' → abonnement client (accès tous les revendeurs)
+// ✅ AJOUT: notifyPaymentConfirmed après activation de chaque abonnement
 // ==========================================
 
-const ligdicashService = require('../services/ligdicashService');
-const { Transaction, User, Subscription, AccessPurchase } = require('../models');
-const ResponseHandler = require('../utils/responseHandler');
+const ligdicashService    = require('../services/ligdicashService');
+const { Transaction, User, Subscription, Pricing } = require('../models');
+const ResponseHandler     = require('../utils/responseHandler');
+const NotificationService = require('../utils/notificationService');
 
 /**
  * @desc    Initier un paiement LigdiCash
@@ -19,135 +23,106 @@ exports.initiatePayment = async (req, res) => {
 
     console.log('💳 Initiation paiement:', { userId, amount, type });
 
-    // Validation
     if (!amount || amount <= 0) {
       return ResponseHandler.error(res, 'Montant invalide', 400);
     }
 
-    if (!type || !['subscription', 'access'].includes(type)) {
-      return ResponseHandler.error(res, 'Type de paiement invalide', 400);
+    if (!type || !['subscription', 'client_subscription'].includes(type)) {
+      return ResponseHandler.error(res, 'Type de paiement invalide (subscription | client_subscription)', 400);
     }
 
     const user = await User.findByPk(userId);
-    if (!user) {
-      return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
-    }
+    if (!user) return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
 
-    // Générer un ID de transaction unique
     const transactionId = `TXN-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 
-    // Préparer les données du paiement
+    const description = type === 'client_subscription'
+      ? `Abonnement client — ${_planLabel(metadata?.planType)}`
+      : `Abonnement revendeur — ${_planLabel(metadata?.planType)}`;
+
+    const customerName = user.role === 'revendeur'
+      ? (user.businessName || `${user.firstName} ${user.lastName}`)
+      : `${user.firstName} ${user.lastName}`;
+
     const paymentData = {
       amount,
-      description: type === 'subscription' 
-        ? `Abonnement revendeur - ${metadata?.planType || 'Plan'}` 
-        : 'Accès 24h client',
-      customerName: user.role === 'revendeur' 
-        ? user.businessName 
-        : `${user.firstName} ${user.lastName}`,
+      description,
+      customerName,
       customerEmail: user.email,
       customerPhone: user.phone,
-      orderId: transactionId,
-      metadata: {
-        userId,
-        type,
-        userRole: user.role,
-        ...metadata
-      }
+      orderId:       transactionId,
+      metadata:      { userId, type, userRole: user.role, ...metadata }
     };
 
-    // Créer le paiement avec LigdiCash
     const paymentResult = await ligdicashService.createPayment(paymentData);
-
     if (!paymentResult.success) {
-      return ResponseHandler.error(res, 'Erreur création paiement', 500);
+      return ResponseHandler.error(res, 'Erreur création paiement LigdiCash', 500);
     }
 
-    // Créer la transaction en base de données (statut pending)
+    const txType = type === 'client_subscription' ? 'client_subscription' : 'seller_subscription';
+
     const transaction = await Transaction.create({
       userId,
-      type: type === 'subscription' ? 'seller_subscription' : 'client_access',
+      type:              txType,
       amount,
-      paymentMethod: 'ligdicash',
+      paymentMethod:     'ligdicash',
       transactionNumber: transactionId,
-      ligdicashToken: paymentResult.token,
-      ligdicashOrderId: paymentResult.orderId,
-      description: paymentData.description,
-      metadata: paymentData.metadata,
-      status: 'pending',
-      isSimulation: paymentResult.isSimulation || false
+      ligdicashToken:    paymentResult.token,
+      ligdicashOrderId:  paymentResult.orderId,
+      description,
+      metadata:          paymentData.metadata,
+      status:            'pending',
+      isSimulation:      paymentResult.isSimulation || false
     });
 
-    console.log('✅ Transaction créée:', {
-      id: transaction.id,
-      token: paymentResult.token,
-      isSimulation: paymentResult.isSimulation
-    });
+    console.log('✅ Transaction créée:', { id: transaction.id, token: paymentResult.token });
 
     return ResponseHandler.success(res, 'Paiement initié', {
-      transactionId: transaction.id,
+      transactionId:     transaction.id,
       transactionNumber: transactionId,
-      paymentUrl: paymentResult.paymentUrl,
-      token: paymentResult.token,
-      isSimulation: paymentResult.isSimulation || false
+      paymentUrl:        paymentResult.paymentUrl,
+      token:             paymentResult.token,
+      isSimulation:      paymentResult.isSimulation || false
     });
 
   } catch (error) {
     console.error('❌ Erreur initiation paiement:', error);
-    return ResponseHandler.error(
-      res, 
-      error.message || 'Erreur lors de l\'initiation du paiement',
-      500
-    );
+    return ResponseHandler.error(res, error.message || 'Erreur paiement', 500);
   }
 };
 
 /**
- * @desc    Callback webhook LigdiCash (notification serveur à serveur)
+ * @desc    Callback webhook LigdiCash (serveur → serveur)
  * @route   POST /api/payments/ligdicash/callback
- * @access  Public (mais sécurisé par signature)
+ * @access  Public (sécurisé par signature)
  */
 exports.handleCallback = async (req, res) => {
   try {
-    console.log('📥 Callback LigdiCash reçu:', req.body);
+    console.log('📥 Callback LigdiCash:', req.body);
 
     const signature = req.headers['x-ligdicash-signature'];
-    const payload = req.body;
+    const payload   = req.body;
 
-    // Vérifier la signature (en production)
-    if (process.env.NODE_ENV === 'production' && !ligdicashService.verifyWebhookSignature(payload, signature)) {
+    if (process.env.NODE_ENV === 'production' &&
+        !ligdicashService.verifyWebhookSignature(payload, signature)) {
       console.error('❌ Signature invalide');
       return res.status(401).json({ error: 'Signature invalide' });
     }
 
-    const { token, status, external_id, custom_data } = payload;
+    const { token, status } = payload;
 
-    // Trouver la transaction
-    const transaction = await Transaction.findOne({
-      where: { 
-        ligdicashToken: token 
-      }
-    });
-
+    const transaction = await Transaction.findOne({ where: { ligdicashToken: token } });
     if (!transaction) {
       console.error('❌ Transaction non trouvée:', token);
       return res.status(404).json({ error: 'Transaction non trouvée' });
     }
 
-    // Mettre à jour selon le statut
     if (status === 'completed' || status === 'success') {
-      await processSuccessfulPayment(transaction);
+      await _processSuccessfulPayment(transaction);
     } else if (status === 'failed' || status === 'cancelled') {
-      await transaction.update({
-        status: 'failed',
-        failureReason: payload.message || 'Paiement échoué',
-        failedAt: new Date()
-      });
+      await transaction.update({ status: 'failed', failedAt: new Date() });
     }
 
-    console.log(`✅ Transaction ${transaction.transactionNumber} mise à jour: ${status}`);
-
-    // Répondre à LigdiCash
     return res.status(200).json({ message: 'Callback traité' });
 
   } catch (error) {
@@ -157,50 +132,37 @@ exports.handleCallback = async (req, res) => {
 };
 
 /**
- * @desc    Retour utilisateur après paiement (success page)
+ * @desc    Retour utilisateur après paiement (redirection navigateur)
  * @route   GET /api/payments/ligdicash/return
  * @access  Public
  */
 exports.handleReturn = async (req, res) => {
   try {
-    const { token, status } = req.query;
-
-    console.log('🔙 Retour utilisateur:', { token, status });
+    const { token } = req.query;
 
     if (!token) {
       return res.redirect(`${process.env.APP_URL}/payment/error?message=Token manquant`);
     }
 
-    // Trouver la transaction
-    const transaction = await Transaction.findOne({
-      where: { ligdicashToken: token }
-    });
-
+    const transaction = await Transaction.findOne({ where: { ligdicashToken: token } });
     if (!transaction) {
       return res.redirect(`${process.env.APP_URL}/payment/error?message=Transaction non trouvée`);
     }
 
-    // Vérifier le statut auprès de LigdiCash
     const paymentStatus = await ligdicashService.checkPaymentStatus(token);
 
     if (paymentStatus.status === 'completed' || paymentStatus.status === 'success') {
-      // Traiter le paiement si pas encore fait
       if (transaction.status === 'pending') {
-        await processSuccessfulPayment(transaction);
+        await _processSuccessfulPayment(transaction);
       }
-
-      return res.redirect(
-        `${process.env.APP_URL}/payment/success?transaction=${transaction.transactionNumber}`
-      );
-    } else {
-      return res.redirect(
-        `${process.env.APP_URL}/payment/pending?transaction=${transaction.transactionNumber}`
-      );
+      return res.redirect(`${process.env.APP_URL}/payment/success?transaction=${transaction.transactionNumber}`);
     }
+
+    return res.redirect(`${process.env.APP_URL}/payment/pending?transaction=${transaction.transactionNumber}`);
 
   } catch (error) {
     console.error('❌ Erreur retour:', error);
-    return res.redirect(`${process.env.APP_URL}/payment/error?message=${error.message}`);
+    return res.redirect(`${process.env.APP_URL}/payment/error?message=${encodeURIComponent(error.message)}`);
   }
 };
 
@@ -214,30 +176,24 @@ exports.checkStatus = async (req, res) => {
     const { transactionNumber } = req.params;
     const userId = req.user.id;
 
-    const transaction = await Transaction.findOne({
-      where: {
-        transactionNumber,
-        userId
-      }
-    });
+    const transaction = await Transaction.findOne({ where: { transactionNumber, userId } });
+    if (!transaction) return ResponseHandler.error(res, 'Transaction non trouvée', 404);
 
-    if (!transaction) {
-      return ResponseHandler.error(res, 'Transaction non trouvée', 404);
-    }
-
-    // Si pending, vérifier auprès de LigdiCash
+    // Si encore pending, interroger LigdiCash
     if (transaction.status === 'pending' && transaction.ligdicashToken) {
       const paymentStatus = await ligdicashService.checkPaymentStatus(transaction.ligdicashToken);
-      
-      if (paymentStatus.status === 'completed') {
-        await processSuccessfulPayment(transaction);
+      if (paymentStatus.status === 'completed' || paymentStatus.status === 'success') {
+        await _processSuccessfulPayment(transaction);
       }
     }
 
+    // Recharger après mise à jour éventuelle
+    await transaction.reload();
+
     return ResponseHandler.success(res, 'Statut récupéré', {
-      status: transaction.status,
-      amount: transaction.amount,
-      createdAt: transaction.createdAt,
+      status:      transaction.status,
+      amount:      transaction.amount,
+      createdAt:   transaction.createdAt,
       completedAt: transaction.completedAt
     });
 
@@ -247,141 +203,120 @@ exports.checkStatus = async (req, res) => {
   }
 };
 
-/**
- * Traiter un paiement réussi
- */
-async function processSuccessfulPayment(transaction) {
-  try {
-    // Marquer comme complété
-    await transaction.update({
-      status: 'completed',
-      completedAt: new Date()
-    });
+// ── Logique interne ───────────────────────────────────────────────────────────
 
-    const metadata = transaction.metadata || {};
+async function _processSuccessfulPayment(transaction) {
+  // Éviter le double-traitement
+  if (transaction.status === 'completed') return;
 
-    // ✅ AJOUT: Inclure le montant dans les metadata
-    const enrichedMetadata = {
-      ...metadata,
-      amount: transaction.amount, // ✅ Passer le montant
-      price: transaction.amount    // ✅ Alternative pour compatibilité
-    };
+  await transaction.update({ status: 'completed', completedAt: new Date() });
 
-    // Activer l'abonnement ou l'accès selon le type
-    if (transaction.type.includes('subscription')) {
-      await activateSubscription(transaction.userId, enrichedMetadata);
-    } else if (transaction.type === 'client_access') {
-      await activateClientAccess(transaction.userId, enrichedMetadata);
-    }
+  const metadata = { ...transaction.metadata, amount: transaction.amount };
 
-    console.log(`✅ Paiement traité: ${transaction.transactionNumber}`);
-
-  } catch (error) {
-    console.error('❌ Erreur traitement paiement:', error);
-    throw error;
+  if (transaction.type === 'seller_subscription') {
+    await _activateSellerSubscription(transaction.userId, metadata, transaction.transactionNumber);
+  } else if (transaction.type === 'client_subscription') {
+    await _activateClientSubscription(transaction.userId, metadata, transaction.transactionNumber);
   }
+
+  console.log(`✅ Paiement traité: ${transaction.transactionNumber}`);
 }
 
 /**
  * Activer un abonnement revendeur
+ * ✅ AJOUT: notifyPaymentConfirmed après activation
  */
-async function activateSubscription(userId, metadata) {
-  // Utiliser la logique existante de votre subscriptionController
-  const { Subscription, Pricing, User } = require('../models');
-  const { Op } = require('sequelize');
-
-  const pricingConfig = await Pricing.findOne({ 
-    where: { targetRole: 'revendeur' }
-  });
-
+async function _activateSellerSubscription(userId, metadata, transactionNumber) {
+  const pricingConfig = await Pricing.findOne({ where: { targetRole: 'revendeur' } });
   if (!pricingConfig) return;
 
-  const planType = metadata.planType || 'monthly';
-  const planConfig = pricingConfig.plans[planType];
-
-  if (!planConfig) return;
+  const planType   = metadata.planType || 'monthly';
+  const planConfig = pricingConfig.plans?.[planType];
+  if (!planConfig) { console.error('❌ Plan revendeur introuvable:', planType); return; }
 
   const startDate = new Date();
-  const endDate = new Date();
+  const endDate   = new Date();
   endDate.setDate(endDate.getDate() + planConfig.duration);
 
   await Subscription.create({
     userId,
     planType,
-    amount: planConfig.price,
-    duration: planConfig.duration,
+    amount:        parseFloat(metadata.amount || planConfig.price),
+    duration:      planConfig.duration,
     startDate,
     endDate,
     paymentMethod: 'ligdicash',
-    status: 'active',
-    isActive: true
+    status:        'active',
+    isActive:      true
   });
 
   await User.update(
-    {
-      subscriptionEndDate: endDate,
-      hasActiveSubscription: true,
-      hasActiveAccess: true
-    },
+    { subscriptionEndDate: endDate, hasActiveSubscription: true, hasActiveAccess: true },
     { where: { id: userId } }
   );
 
-  console.log(`✅ Abonnement activé pour user ${userId}`);
+  // ✅ Notification push + BDD au revendeur
+  await NotificationService.notifyPaymentConfirmed(userId, {
+    amount:            metadata.amount,
+    transactionNumber,
+    planType,
+    planLabel:         _planLabel(planType),
+    endDate:           endDate.toLocaleDateString('fr-FR'),
+    type:              'seller_subscription',
+  });
+
+  console.log(`✅ Abonnement revendeur activé — user ${userId} jusqu'au ${endDate.toLocaleDateString('fr-FR')}`);
 }
 
 /**
- * Activer un accès client 24h
+ * Activer un abonnement client (accès à tous les revendeurs)
+ * ✅ AJOUT: notifyPaymentConfirmed après activation
  */
-async function activateClientAccess(userId, metadata) {
-  const { AccessPurchase, User, Pricing } = require('../models');
+async function _activateClientSubscription(userId, metadata, transactionNumber) {
+  const pricingConfig = await Pricing.findOne({ where: { targetRole: 'client' } });
+  if (!pricingConfig) return;
 
-  try {
-    const durationHours = metadata.duration || 24;
-    const purchaseDate = new Date();
-    const expiryDate = new Date();
-    expiryDate.setHours(expiryDate.getHours() + durationHours);
+  const planType   = metadata.planType || 'monthly';
+  const planConfig = pricingConfig.plans?.[planType];
+  if (!planConfig) { console.error('❌ Plan client introuvable:', planType); return; }
 
-    // ✅ Récupérer le montant
-    let amount = metadata.amount || metadata.price;
-    
-    if (!amount) {
-      const pricingConfig = await Pricing.findOne({ 
-        where: { targetRole: 'client' }
-      });
-      
-      if (pricingConfig && pricingConfig.isActive) {
-        amount = pricingConfig.price || 0;
-      } else {
-        amount = 0;
-      }
-    }
+  const startDate = new Date();
+  const endDate   = new Date();
+  endDate.setDate(endDate.getDate() + planConfig.duration);
 
-    // ✅ Créer avec le montant
-    await AccessPurchase.create({
-      userId,
-      amount: parseFloat(amount), // ✅ REQUIS
-      durationHours,
-      purchaseDate,
-      expiryDate,
-      paymentMethod: 'ligdicash',
-      status: 'completed',
-      isActive: true
-    });
+  await Subscription.create({
+    userId,
+    planType,
+    amount:        parseFloat(metadata.amount || planConfig.price),
+    duration:      planConfig.duration,
+    startDate,
+    endDate,
+    paymentMethod: 'ligdicash',
+    status:        'active',
+    isActive:      true
+  });
 
-    await User.update(
-      {
-        hasActiveAccess: true,
-        accessExpiryDate: expiryDate
-      },
-      { where: { id: userId } }
-    );
+  await User.update(
+    { subscriptionEndDate: endDate, hasActiveSubscription: true, hasActiveAccess: true },
+    { where: { id: userId } }
+  );
 
-    console.log(`✅ Accès 24h activé pour user ${userId} - Montant: ${amount} FCFA`);
+  // ✅ Notification push + BDD au client
+  await NotificationService.notifyPaymentConfirmed(userId, {
+    amount:            metadata.amount,
+    transactionNumber,
+    planType,
+    planLabel:         _planLabel(planType),
+    endDate:           endDate.toLocaleDateString('fr-FR'),
+    type:              'client_subscription',
+  });
 
-  } catch (error) {
-    console.error('❌ Erreur activation accès:', error);
-    throw error;
-  }
+  console.log(`✅ Abonnement client activé — user ${userId} jusqu'au ${endDate.toLocaleDateString('fr-FR')}`);
+}
+
+function _planLabel(planType) {
+  const labels = { weekly: 'Hebdomadaire', monthly: 'Mensuel', quarterly: 'Trimestriel', yearly: 'Annuel' };
+  return labels[planType] || planType || 'Standard';
 }
 
 module.exports = exports;

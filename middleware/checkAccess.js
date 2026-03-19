@@ -1,173 +1,112 @@
 // ==========================================
 // FICHIER: middleware/checkAccess.js
-// Middleware pour vérifier l'accès client avant actions sensibles
+// ✅ CORRIGÉ: attachAccessInfo ne bloque JAMAIS — laisse toujours passer
+//    Le contrôleur searchProducts applique lui-même la limite maxSellers
+//    checkClientAccess (bloquant) réservé aux routes strictement payantes
+//    Limite sans abonnement : 3 revendeurs
 // ==========================================
 
 const { User, Pricing } = require('../models');
 
 /**
- * Middleware pour vérifier si le client a un accès actif
- * Utiliser ce middleware sur les routes qui nécessitent un accès payant
+ * Middleware NON-BLOQUANT.
+ * Attache req.accessInfo et appelle next() dans TOUS les cas.
+ * À utiliser sur GET /api/products/search.
  */
-const checkClientAccess = async (req, res, next) => {
+const attachAccessInfo = async (req, res, next) => {
   try {
-    // Si l'utilisateur n'est pas un client, laisser passer
+    // Non-clients → accès illimité, pas de calcul
     if (!req.user || req.user.role !== 'client') {
+      req.accessInfo = {
+        hasAccess:      true,
+        accessType:     'unrestricted',
+        maxSellers:     null,
+        isSystemActive: false
+      };
       return next();
     }
 
-    // Vérifier si le système de tarification est actif
-    const pricingConfig = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
+    const pricingConfig = await Pricing.findOne({ where: { targetRole: 'client' } });
 
-    // Si système désactivé, accès gratuit pour tous
+    // Système désactivé → gratuit illimité
     if (!pricingConfig || !pricingConfig.isActive) {
       req.accessInfo = {
-        hasAccess: true,
-        accessType: 'free',
-        requiresPurchase: false
+        hasAccess:      true,
+        accessType:     'free',
+        maxSellers:     null,
+        isSystemActive: false
       };
       return next();
     }
 
-    // Récupérer l'utilisateur avec ses infos d'accès
     const user = await User.findByPk(req.user.id);
+    const now  = new Date();
 
-    // Vérifier si l'utilisateur a un accès actif
-    if (!user.hasActiveAccess || !user.accessExpiryDate) {
+    // Abonnement actif
+    if (user.subscriptionEndDate && new Date(user.subscriptionEndDate) > now) {
+      const remainingMs   = new Date(user.subscriptionEndDate) - now;
+      const remainingDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
       req.accessInfo = {
-        hasAccess: false,
-        accessType: 'none',
-        requiresPurchase: true,
-        price: parseFloat(pricingConfig.accessPrice24h),
-        duration: pricingConfig.accessDurationHours
+        hasAccess:      true,
+        accessType:     'active',
+        maxSellers:     null,
+        isSystemActive: true,
+        expiresAt:      user.subscriptionEndDate,
+        remainingDays
       };
-      
-      return res.status(403).json({
-        success: false,
-        requiresAccess: true,
-        message: 'Vous devez acheter un accès 24h pour voir ces informations',
-        accessInfo: {
-          price: parseFloat(pricingConfig.accessPrice24h),
-          duration: pricingConfig.accessDurationHours,
-          message: `Accès 24h disponible à ${pricingConfig.accessPrice24h} FCFA`
-        }
-      });
+      return next();
     }
 
-    // Vérifier si l'accès n'a pas expiré
-    const now = new Date();
-    const expiryDate = new Date(user.accessExpiryDate);
-
-    if (now >= expiryDate) {
-      // Mettre à jour le statut
-      await user.update({ hasActiveAccess: false });
-
+    // Période d'essai
+    if (user.freeTrialEndDate && new Date(user.freeTrialEndDate) > now) {
       req.accessInfo = {
-        hasAccess: false,
-        accessType: 'expired',
-        requiresPurchase: true,
-        expiredAt: expiryDate,
-        price: parseFloat(pricingConfig.accessPrice24h),
-        duration: pricingConfig.accessDurationHours
+        hasAccess:      true,
+        accessType:     'trial',
+        maxSellers:     null,
+        isSystemActive: true,
+        expiresAt:      user.freeTrialEndDate
       };
-
-      return res.status(403).json({
-        success: false,
-        requiresAccess: true,
-        message: 'Votre accès a expiré. Veuillez renouveler pour continuer.',
-        accessInfo: {
-          expiredAt: expiryDate,
-          price: parseFloat(pricingConfig.accessPrice24h),
-          duration: pricingConfig.accessDurationHours,
-          message: `Renouvelez votre accès pour ${pricingConfig.accessPrice24h} FCFA`
-        }
-      });
+      return next();
     }
 
-    // Calculer le temps restant
-    const remainingMs = expiryDate - now;
-    const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
-    const remainingMinutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-
-    // L'utilisateur a un accès actif
+    // Aucun abonnement → limite à 3 mais on LAISSE PASSER (jamais de 403 ici)
     req.accessInfo = {
-      hasAccess: true,
-      accessType: 'active',
-      requiresPurchase: false,
-      expiresAt: expiryDate,
-      remainingHours,
-      remainingMinutes,
-      remainingTime: `${remainingHours}h ${remainingMinutes}min`
+      hasAccess:      false,
+      accessType:     'none',
+      maxSellers:     3,
+      isSystemActive: true,
+      plans:          pricingConfig.plans || {}
     };
-
-    next();
+    return next();
 
   } catch (error) {
-    console.error('❌ Erreur vérification accès:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la vérification d\'accès',
-      error: error.message
-    });
+    console.error('❌ Erreur attachAccessInfo:', error);
+    req.accessInfo = {
+      hasAccess:      false,
+      accessType:     'error',
+      maxSellers:     3,
+      isSystemActive: false
+    };
+    return next();
   }
 };
 
 /**
- * Middleware optionnel qui ajoute les infos d'accès sans bloquer
- * Utile pour les routes qui veulent afficher des infos partielles
+ * Middleware BLOQUANT — NE PAS utiliser sur /products/search.
+ * Réservé aux routes qui nécessitent absolument un abonnement actif.
  */
-const attachAccessInfo = async (req, res, next) => {
-  try {
-    if (!req.user || req.user.role !== 'client') {
-      req.accessInfo = { hasAccess: true, accessType: 'unrestricted' };
-      return next();
+const checkClientAccess = async (req, res, next) => {
+  await attachAccessInfo(req, res, () => {
+    if (!req.accessInfo.hasAccess) {
+      return res.status(403).json({
+        success: false,
+        requiresSubscription: true,
+        message:    'Abonnement requis',
+        accessInfo: req.accessInfo
+      });
     }
-
-    const pricingConfig = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
-
-    if (!pricingConfig || !pricingConfig.isActive) {
-      req.accessInfo = { hasAccess: true, accessType: 'free' };
-      return next();
-    }
-
-    const user = await User.findByPk(req.user.id);
-    const now = new Date();
-    
-    if (user.hasActiveAccess && user.accessExpiryDate && now < new Date(user.accessExpiryDate)) {
-      const remainingMs = new Date(user.accessExpiryDate) - now;
-      const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
-      const remainingMinutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-      
-      req.accessInfo = {
-        hasAccess: true,
-        accessType: 'active',
-        expiresAt: user.accessExpiryDate,
-        remainingHours,
-        remainingMinutes
-      };
-    } else {
-      req.accessInfo = {
-        hasAccess: false,
-        accessType: user.accessExpiryDate ? 'expired' : 'none',
-        price: parseFloat(pricingConfig.accessPrice24h),
-        duration: pricingConfig.accessDurationHours
-      };
-    }
-
     next();
-
-  } catch (error) {
-    console.error('❌ Erreur attachement info accès:', error);
-    req.accessInfo = { hasAccess: false, error: true };
-    next();
-  }
+  });
 };
 
-module.exports = {
-  checkClientAccess,
-  attachAccessInfo
-};
+module.exports = { checkClientAccess, attachAccessInfo };

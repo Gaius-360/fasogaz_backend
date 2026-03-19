@@ -1,150 +1,15 @@
 // ==========================================
-// FICHIER: controllers/accessController.js (VERSION AVEC TRANSACTIONS)
-// Contrôleur pour gérer les achats d'accès 24h avec création automatique de transactions
+// FICHIER: controllers/accessController.js
+// ✅ REFONTE: Abonnement classique pour les clients
+//    Sans abonnement → 3 revendeurs max (les plus proches)
+//    Avec abonnement → tous les revendeurs de toutes les villes + filtres débloqués
 // ==========================================
 
-const { User, AccessPurchase, Pricing } = require('../models');
+const { User, Subscription, Pricing } = require('../models');
 const { Op } = require('sequelize');
-const transactionController = require('./transactionController');
 
 /**
- * @desc    Acheter un accès 24h AVEC transaction
- * @route   POST /api/access/purchase
- * @access  Private (Client)
- */
-exports.purchaseAccess = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { paymentMethod, transactionId } = req.body;
-
-    if (!paymentMethod) {
-      return res.status(400).json({
-        success: false,
-        message: 'Méthode de paiement requise'
-      });
-    }
-
-    // Récupérer la config de tarification
-    const pricingConfig = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
-
-    // Si système désactivé
-    if (!pricingConfig || !pricingConfig.isActive) {
-      return res.status(400).json({
-        success: false,
-        message: 'Le système de paiement n\'est pas activé. Accès gratuit pour tous.'
-      });
-    }
-
-    const price = parseFloat(pricingConfig.accessPrice24h);
-    const duration = pricingConfig.accessDurationHours || 24;
-
-    // Vérifier les limites si configurées
-    if (pricingConfig.options?.maxPurchasesPerDay) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const purchasesToday = await AccessPurchase.count({
-        where: {
-          userId,
-          purchaseDate: {
-            [Op.gte]: today
-          }
-        }
-      });
-
-      if (purchasesToday >= pricingConfig.options.maxPurchasesPerDay) {
-        return res.status(429).json({
-          success: false,
-          message: `Limite de ${pricingConfig.options.maxPurchasesPerDay} achats par jour atteinte`
-        });
-      }
-    }
-
-    // Dates
-    const now = new Date();
-    const expiryDate = new Date(now.getTime() + duration * 60 * 60 * 1000);
-
-    // ✅ CRÉER L'ACHAT D'ACCÈS
-    const accessPurchase = await AccessPurchase.create({
-      userId,
-      amount: price,
-      durationHours: duration,
-      purchaseDate: now,
-      expiryDate,
-      paymentMethod,
-      transactionId: transactionId || null,
-      status: 'completed',
-      isActive: true,
-      ipAddress: req.ip || req.connection.remoteAddress,
-      deviceInfo: req.headers['user-agent']
-    });
-
-    // ✅ CRÉER LA TRANSACTION ASSOCIÉE
-    const transaction = await transactionController.createClientAccessTransaction(
-      userId,
-      accessPurchase.id,
-      price,
-      paymentMethod,
-      {
-        duration,
-        description: `Accès 24h - ${duration}h`,
-        purchaseDate: now,
-        expiryDate
-      }
-    );
-
-    // Activer l'accès pour l'utilisateur
-    const user = await User.findByPk(userId);
-    await user.update({
-      lastAccessPurchaseDate: now,
-      accessExpiryDate: expiryDate,
-      hasActiveAccess: true,
-      totalAccessPurchases: (user.totalAccessPurchases || 0) + 1
-    });
-
-    console.log(`✅ Accès client créé: ${accessPurchase.id}`);
-    console.log(`✅ Transaction créée: ${transaction.transactionNumber}`);
-
-    res.status(201).json({
-      success: true,
-      message: `Accès 24h activé avec succès ! Valable jusqu'au ${expiryDate.toLocaleString('fr-FR')}`,
-      data: {
-        purchase: {
-          id: accessPurchase.id,
-          durationHours: duration,
-          purchaseDate: now,
-          expiryDate,
-          amount: price
-        },
-        transaction: {
-          id: transaction.id,
-          transactionNumber: transaction.transactionNumber,
-          amount: transaction.amount,
-          status: transaction.status
-        },
-        access: {
-          activatedAt: now,
-          expiresAt: expiryDate,
-          durationHours: duration,
-          price: price
-        }
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Erreur achat accès:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de l\'achat',
-      error: error.message
-    });
-  }
-};
-
-/**
- * @desc    Vérifier le statut d'accès de l'utilisateur
+ * @desc    Vérifier le statut d'abonnement du client
  * @route   GET /api/access/status
  * @access  Private (Client)
  */
@@ -152,169 +17,154 @@ exports.checkAccessStatus = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Vérifier si le système est actif
-    const pricingConfig = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
+    const pricingConfig = await Pricing.findOne({ where: { targetRole: 'client' } });
 
-    // Si système désactivé, accès gratuit pour tous
+    // Système désactivé = accès gratuit illimité pour tous
     if (!pricingConfig || !pricingConfig.isActive) {
       return res.json({
         success: true,
         data: {
-          hasAccess: true,
-          accessType: 'free',
-          message: 'Accès gratuit illimité',
-          expiresAt: null,
-          remainingHours: null
+          hasAccess:      true,
+          accessType:     'free',
+          isSystemActive: false,
+          message:        'Accès gratuit illimité',
+          maxSellers:     null,
+          expiresAt:      null,
+          remainingDays:  null,
+          plans:          null
         }
       });
     }
 
-    // Vérifier l'accès actif de l'utilisateur
     const user = await User.findByPk(userId);
+    const now  = new Date();
 
-    if (!user.hasActiveAccess || !user.accessExpiryDate) {
+    // Abonnement actif
+    if (user.subscriptionEndDate && new Date(user.subscriptionEndDate) > now) {
+      const remainingMs   = new Date(user.subscriptionEndDate) - now;
+      const remainingDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
       return res.json({
         success: true,
         data: {
-          hasAccess: false,
-          accessType: 'none',
-          message: 'Aucun accès actif',
-          price: parseFloat(pricingConfig.accessPrice24h),
-          duration: pricingConfig.accessDurationHours,
-          totalPurchases: user.totalAccessPurchases || 0
+          hasAccess:      true,
+          accessType:     'active',
+          isSystemActive: true,
+          message:        'Abonnement actif',
+          maxSellers:     null,
+          expiresAt:      user.subscriptionEndDate,
+          remainingDays,
+          plans:          _buildPlansInfo(pricingConfig)
         }
       });
     }
 
-    // Vérifier si l'accès a expiré
-    const now = new Date();
-    const expiryDate = new Date(user.accessExpiryDate);
-
-    if (now >= expiryDate) {
-      // Accès expiré, mettre à jour
-      await user.update({
-        hasActiveAccess: false
-      });
-
+    // Période d'essai active
+    if (user.freeTrialEndDate && new Date(user.freeTrialEndDate) > now) {
+      const remainingMs   = new Date(user.freeTrialEndDate) - now;
+      const remainingDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
       return res.json({
         success: true,
         data: {
-          hasAccess: false,
-          accessType: 'expired',
-          message: 'Votre accès a expiré',
-          expiredAt: expiryDate,
-          price: parseFloat(pricingConfig.accessPrice24h),
-          duration: pricingConfig.accessDurationHours,
-          totalPurchases: user.totalAccessPurchases || 0
+          hasAccess:      true,
+          accessType:     'trial',
+          isSystemActive: true,
+          message:        `Période d'essai — ${remainingDays} jour(s) restant(s)`,
+          maxSellers:     null,
+          expiresAt:      user.freeTrialEndDate,
+          remainingDays,
+          plans:          _buildPlansInfo(pricingConfig)
         }
       });
     }
 
-    // Calculer le temps restant
-    const remainingMs = expiryDate - now;
-    const remainingHours = Math.floor(remainingMs / (1000 * 60 * 60));
-    const remainingMinutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
-
+    // Aucun abonnement → limite à 3 revendeurs
     return res.json({
       success: true,
       data: {
-        hasAccess: true,
-        accessType: 'active',
-        message: 'Accès actif',
-        purchasedAt: user.lastAccessPurchaseDate,
-        expiresAt: expiryDate,
-        remainingHours,
-        remainingMinutes,
-        remainingTime: `${remainingHours}h ${remainingMinutes}min`,
-        totalPurchases: user.totalAccessPurchases || 0
+        hasAccess:      false,
+        accessType:     'none',
+        isSystemActive: true,
+        message:        'Abonnement requis pour voir tous les revendeurs',
+        maxSellers:     3,
+        expiresAt:      null,
+        remainingDays:  null,
+        plans:          _buildPlansInfo(pricingConfig)
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur vérification accès:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la vérification',
-      error: error.message
-    });
+    console.error('❌ Erreur statut accès:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };
 
 /**
- * @desc    Obtenir la configuration de tarification client
+ * @desc    Plans disponibles (public)
  * @route   GET /api/access/pricing
  * @access  Public
  */
 exports.getPricing = async (req, res) => {
   try {
-    const pricingConfig = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
+    const pricingConfig = await Pricing.findOne({ where: { targetRole: 'client' } });
 
-    if (!pricingConfig) {
+    if (!pricingConfig || !pricingConfig.isActive) {
       return res.json({
         success: true,
-        data: {
-          isActive: false,
-          price: 0,
-          duration: 24,
-          message: 'Accès gratuit illimité'
-        }
+        data: { isActive: false, message: 'Accès gratuit illimité', plans: {} }
       });
     }
 
     return res.json({
       success: true,
       data: {
-        isActive: pricingConfig.isActive,
-        price: parseFloat(pricingConfig.accessPrice24h),
-        duration: pricingConfig.accessDurationHours,
-        options: pricingConfig.options || {},
-        message: pricingConfig.isActive 
-          ? `Accès 24h à ${pricingConfig.accessPrice24h} FCFA`
-          : 'Accès gratuit illimité'
+        isActive:                      true,
+        maxSellersWithoutSubscription: 3,
+        plans:                         pricingConfig.plans || {}
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur récupération tarifs:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la récupération',
-      error: error.message
-    });
+    console.error('❌ Erreur tarification:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 };
 
 /**
- * @desc    Obtenir l'historique des achats
+ * @desc    Historique des abonnements du client
  * @route   GET /api/access/history
  * @access  Private (Client)
  */
 exports.getAccessHistory = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId                   = req.user.id;
     const { page = 1, limit = 20 } = req.query;
+    const offset                   = (page - 1) * limit;
 
-    const offset = (page - 1) * limit;
-
-    const { count, rows: purchases } = await AccessPurchase.findAndCountAll({
-      where: { userId },
-      order: [['purchaseDate', 'DESC']],
-      limit: parseInt(limit),
+    const { count, rows: subscriptions } = await Subscription.findAndCountAll({
+      where:  { userId },
+      order:  [['createdAt', 'DESC']],
+      limit:  parseInt(limit),
       offset: parseInt(offset)
     });
 
     res.json({
       success: true,
       data: {
-        purchases,
+        purchases: subscriptions.map(s => ({
+          id:            s.id,
+          planType:      s.planType,
+          amount:        parseFloat(s.amount),
+          durationHours: (s.duration || 30) * 24,
+          purchaseDate:  s.createdAt,
+          expiryDate:    s.endDate,
+          paymentMethod: s.paymentMethod || 'ligdicash',
+          status:        s.status,
+          isActive:      s.isActive
+        })),
         pagination: {
-          total: count,
-          page: parseInt(page),
-          limit: parseInt(limit),
+          total:      count,
+          page:       parseInt(page),
+          limit:      parseInt(limit),
           totalPages: Math.ceil(count / limit)
         }
       }
@@ -322,16 +172,12 @@ exports.getAccessHistory = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Erreur historique:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la récupération',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 };
 
 /**
- * @desc    Obtenir les statistiques d'accès
+ * @desc    Statistiques d'abonnement du client
  * @route   GET /api/access/stats
  * @access  Private (Client)
  */
@@ -339,57 +185,53 @@ exports.getAccessStats = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const totalPurchases = await AccessPurchase.count({
-      where: { userId }
+    const totalPurchases = await Subscription.count({ where: { userId } });
+
+    const totalSpent = await Subscription.sum('amount', {
+      where: { userId, status: { [Op.in]: ['active', 'completed'] } }
     });
 
-    const totalSpent = await AccessPurchase.sum('amount', {
-      where: { 
-        userId,
-        status: 'completed'
-      }
-    });
-
-    const lastPurchase = await AccessPurchase.findOne({
+    const lastSubscription = await Subscription.findOne({
       where: { userId },
-      order: [['purchaseDate', 'DESC']]
+      order: [['createdAt', 'DESC']]
     });
 
-    // Achats des 30 derniers jours
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const recentPurchases = await AccessPurchase.count({
-      where: {
-        userId,
-        purchaseDate: {
-          [Op.gte]: thirtyDaysAgo
-        }
-      }
+    const recentPurchases = await Subscription.count({
+      where: { userId, createdAt: { [Op.gte]: thirtyDaysAgo } }
     });
 
     res.json({
       success: true,
       data: {
         totalPurchases,
-        totalSpent: parseFloat(totalSpent || 0),
+        totalSpent:     parseFloat(totalSpent || 0),
         recentPurchases,
-        lastPurchase: lastPurchase ? {
-          date: lastPurchase.purchaseDate,
-          amount: parseFloat(lastPurchase.amount),
-          expiryDate: lastPurchase.expiryDate
-        } : null
+        lastPurchase:   lastSubscription
+          ? {
+              date:       lastSubscription.createdAt,
+              amount:     parseFloat(lastSubscription.amount),
+              expiryDate: lastSubscription.endDate
+            }
+          : null
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur statistiques:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la récupération',
-      error: error.message
-    });
+    console.error('❌ Erreur stats:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur' });
   }
 };
+
+// ── Helper privé ──────────────────────────────────────────────────────────────
+
+function _buildPlansInfo(pricingConfig) {
+  if (!pricingConfig?.plans) return {};
+  return Object.fromEntries(
+    Object.entries(pricingConfig.plans).filter(([, p]) => p.enabled)
+  );
+}
 
 module.exports = exports;

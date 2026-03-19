@@ -1,6 +1,6 @@
 // ==========================================
 // FICHIER: models/address.js
-// Modèle d'adresse sans champ quartier
+// ✅ MODIFIÉ: Ajout du champ quarter
 // ==========================================
 
 module.exports = (sequelize, DataTypes) => {
@@ -26,11 +26,16 @@ module.exports = (sequelize, DataTypes) => {
     fullAddress: {
       type: DataTypes.TEXT,
       allowNull: false,
-      comment: 'Adresse complète générée automatiquement'
+      comment: 'Adresse complète générée automatiquement (quarter + city)'
     },
     city: {
       type: DataTypes.ENUM('Ouagadougou', 'Bobo-Dioulasso'),
       allowNull: false
+    },
+    quarter: {
+      type: DataTypes.STRING(150),
+      allowNull: true,
+      comment: 'Quartier détecté par géocodage inversé ou saisi manuellement'
     },
     latitude: {
       type: DataTypes.DECIMAL(10, 8),

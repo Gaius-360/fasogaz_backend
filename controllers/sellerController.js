@@ -1,5 +1,7 @@
 // ==========================================
 // FICHIER: controllers/sellerController.js
+// ✅ NOUVEAU: sellerLocation injecté dans getReceivedOrders
+//            → permet au frontend de calculer la distance dépôt → client
 // ==========================================
 
 const db = require('../models');
@@ -11,36 +13,24 @@ const { Op } = require('sequelize');
 // @access  Private (revendeur)
 exports.getStats = async (req, res) => {
   try {
-    // Produits
-    const products = await db.Product.findAll({
-      where: { sellerId: req.user.id }
-    });
+    const products = await db.Product.findAll({ where: { sellerId: req.user.id } });
+    const orders   = await db.Order.findAll({   where: { sellerId: req.user.id } });
+    const reviews  = await db.Review.findAll({  where: { sellerId: req.user.id } });
 
-    // Commandes
-    const orders = await db.Order.findAll({
-      where: { sellerId: req.user.id }
-    });
-
-    // Avis
-    const reviews = await db.Review.findAll({
-      where: { sellerId: req.user.id }
-    });
-
-    // Calculer les stats
     const stats = {
       products: {
-        total: products.length,
-        active: products.filter(p => p.isActive).length,
+        total:      products.length,
+        active:     products.filter(p => p.isActive).length,
         totalStock: products.reduce((sum, p) => sum + p.quantity, 0),
-        lowStock: products.filter(p => p.quantity <= 5).length
+        lowStock:   products.filter(p => p.quantity <= 5).length
       },
       orders: {
-        total: orders.length,
-        pending: orders.filter(o => o.status === 'pending').length,
-        accepted: orders.filter(o => o.status === 'accepted').length,
+        total:     orders.length,
+        pending:   orders.filter(o => o.status === 'pending').length,
+        accepted:  orders.filter(o => o.status === 'accepted').length,
         completed: orders.filter(o => o.status === 'completed').length,
         cancelled: orders.filter(o => o.status === 'cancelled').length,
-        rejected: orders.filter(o => o.status === 'rejected').length
+        rejected:  orders.filter(o => o.status === 'rejected').length
       },
       revenue: {
         total: orders
@@ -48,36 +38,31 @@ exports.getStats = async (req, res) => {
           .reduce((sum, o) => sum + parseFloat(o.total), 0),
         thisMonth: orders
           .filter(o => {
-            const orderDate = new Date(o.createdAt);
+            const d = new Date(o.createdAt);
             const now = new Date();
             return o.status === 'completed' &&
-              orderDate.getMonth() === now.getMonth() &&
-              orderDate.getFullYear() === now.getFullYear();
+              d.getMonth() === now.getMonth() &&
+              d.getFullYear() === now.getFullYear();
           })
           .reduce((sum, o) => sum + parseFloat(o.total), 0),
         today: orders
           .filter(o => {
-            const orderDate = new Date(o.createdAt);
-            const today = new Date();
+            const d = new Date(o.createdAt);
             return o.status === 'completed' &&
-              orderDate.toDateString() === today.toDateString();
+              d.toDateString() === new Date().toDateString();
           })
           .reduce((sum, o) => sum + parseFloat(o.total), 0)
       },
       reviews: {
-        total: reviews.length,
-        average: reviews.length > 0
+        total:        reviews.length,
+        average:      reviews.length > 0
           ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
           : 0,
         withResponse: reviews.filter(r => r.sellerResponse).length
       }
     };
 
-    return ResponseHandler.success(
-      res,
-      'Statistiques récupérées',
-      stats
-    );
+    return ResponseHandler.success(res, 'Statistiques récupérées', stats);
   } catch (error) {
     console.error('Erreur récupération stats:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -94,11 +79,7 @@ exports.getMyProducts = async (req, res) => {
       order: [['createdAt', 'DESC']]
     });
 
-    return ResponseHandler.success(
-      res,
-      'Produits récupérés',
-      { products }
-    );
+    return ResponseHandler.success(res, 'Produits récupérés', { products });
   } catch (error) {
     console.error('Erreur récupération produits:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -110,14 +91,12 @@ exports.getMyProducts = async (req, res) => {
 // @access  Private (revendeur)
 exports.getProductsStats = async (req, res) => {
   try {
-    const products = await db.Product.findAll({
-      where: { sellerId: req.user.id }
-    });
+    const products = await db.Product.findAll({ where: { sellerId: req.user.id } });
 
     const stats = {
-      total: products.length,
-      available: products.filter(p => p.status === 'available').length,
-      limited: products.filter(p => p.status === 'limited').length,
+      total:      products.length,
+      available:  products.filter(p => p.status === 'available').length,
+      limited:    products.filter(p => p.status === 'limited').length,
       outOfStock: products.filter(p => p.status === 'out_of_stock').length,
       totalValue: products.reduce((sum, p) => sum + (p.price * p.quantity), 0),
       totalStock: products.reduce((sum, p) => sum + p.quantity, 0)
@@ -138,9 +117,7 @@ exports.getReceivedOrders = async (req, res) => {
     const { status } = req.query;
 
     const where = { sellerId: req.user.id };
-    if (status) {
-      where.status = status;
-    }
+    if (status) where.status = status;
 
     const orders = await db.Order.findAll({
       where,
@@ -169,11 +146,51 @@ exports.getReceivedOrders = async (req, res) => {
       order: [['createdAt', 'DESC']]
     });
 
-    return ResponseHandler.success(
-      res,
-      'Commandes récupérées',
-      { orders }
-    );
+    // ✅ NOUVEAU: construire sellerLocation depuis le profil du revendeur connecté.
+    //
+    // Priorité des sources de coordonnées du point de vente :
+    //   1. req.user.latitude / req.user.longitude  (champs directs sur User)
+    //   2. Adresse par défaut du revendeur dans la table Address
+    //
+    // Si le modèle User stocke déjà lat/lng (ex. champs ajoutés au profil), on
+    // les utilise directement. Sinon, on cherche l'adresse isDefault=true.
+    //
+    // Le frontend lit order.sellerLocation en priorité, puis order.seller?.address.
+
+    let sellerLocation = null;
+
+    // Source 1 : champs lat/lng sur le User (si présents)
+    if (req.user.latitude && req.user.longitude) {
+      sellerLocation = {
+        latitude:  req.user.latitude,
+        longitude: req.user.longitude,
+        label:     req.user.businessName || req.user.firstName || 'Votre dépôt'
+      };
+    }
+
+    // Source 2 : adresse par défaut dans la table Address
+    if (!sellerLocation) {
+      const defaultAddress = await db.Address.findOne({
+        where: { userId: req.user.id, isDefault: true },
+        attributes: ['latitude', 'longitude', 'label', 'quarter', 'city']
+      });
+
+      if (defaultAddress?.latitude && defaultAddress?.longitude) {
+        sellerLocation = {
+          latitude:  defaultAddress.latitude,
+          longitude: defaultAddress.longitude,
+          label:     defaultAddress.label || defaultAddress.quarter || 'Votre dépôt'
+        };
+      }
+    }
+
+    // Injecter sellerLocation dans chaque commande sérialisée
+    const ordersWithDistance = orders.map(order => ({
+      ...order.toJSON(),
+      sellerLocation   // null si aucune coordonnée n'est disponible
+    }));
+
+    return ResponseHandler.success(res, 'Commandes récupérées', { orders: ordersWithDistance });
   } catch (error) {
     console.error('Erreur récupération commandes:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -185,18 +202,16 @@ exports.getReceivedOrders = async (req, res) => {
 // @access  Private (revendeur)
 exports.getOrdersStats = async (req, res) => {
   try {
-    const orders = await db.Order.findAll({
-      where: { sellerId: req.user.id }
-    });
+    const orders = await db.Order.findAll({ where: { sellerId: req.user.id } });
 
     const stats = {
-      total: orders.length,
-      pending: orders.filter(o => o.status === 'pending').length,
-      accepted: orders.filter(o => o.status === 'accepted').length,
+      total:     orders.length,
+      pending:   orders.filter(o => o.status === 'pending').length,
+      accepted:  orders.filter(o => o.status === 'accepted').length,
       completed: orders.filter(o => o.status === 'completed').length,
       cancelled: orders.filter(o => o.status === 'cancelled').length,
-      rejected: orders.filter(o => o.status === 'rejected').length,
-      revenue: orders
+      rejected:  orders.filter(o => o.status === 'rejected').length,
+      revenue:   orders
         .filter(o => o.status === 'completed')
         .reduce((sum, o) => sum + parseFloat(o.total), 0)
     };
@@ -217,10 +232,7 @@ exports.acceptOrder = async (req, res) => {
     const { estimatedTime } = req.body;
 
     const order = await db.Order.findOne({
-      where: {
-        id,
-        sellerId: req.user.id
-      }
+      where: { id, sellerId: req.user.id }
     });
 
     if (!order) {
@@ -228,38 +240,26 @@ exports.acceptOrder = async (req, res) => {
     }
 
     if (order.status !== 'pending') {
-      return ResponseHandler.error(
-        res,
-        'Cette commande ne peut plus être acceptée',
-        400
-      );
+      return ResponseHandler.error(res, 'Cette commande ne peut plus être acceptée', 400);
     }
 
     await order.update({
-      status: 'accepted',
-      acceptedAt: new Date(),
+      status:        'accepted',
+      acceptedAt:    new Date(),
       estimatedTime: estimatedTime || null
     });
 
-    // Notifier le client
     await db.Notification.create({
-      userId: order.customerId,
-      type: 'order_accepted',
-      title: 'Commande acceptée',
-      message: `Votre commande ${order.orderNumber} a été acceptée`,
-      data: {
-        orderId: order.id,
-        orderNumber: order.orderNumber
-      },
-      priority: 'high',
+      userId:    order.customerId,
+      type:      'order_accepted',
+      title:     'Commande acceptée',
+      message:   `Votre commande ${order.orderNumber} a été acceptée`,
+      data:      { orderId: order.id, orderNumber: order.orderNumber },
+      priority:  'high',
       actionUrl: `/client/orders/${order.id}`
     });
 
-    return ResponseHandler.success(
-      res,
-      'Commande acceptée',
-      order
-    );
+    return ResponseHandler.success(res, 'Commande acceptée', order);
   } catch (error) {
     console.error('Erreur acceptation commande:', error);
     return ResponseHandler.error(res, 'Erreur lors de l\'acceptation', 500);
@@ -275,18 +275,11 @@ exports.rejectOrder = async (req, res) => {
     const { reason } = req.body;
 
     if (!reason) {
-      return ResponseHandler.error(
-        res,
-        'La raison du rejet est requise',
-        400
-      );
+      return ResponseHandler.error(res, 'La raison du rejet est requise', 400);
     }
 
     const order = await db.Order.findOne({
-      where: {
-        id,
-        sellerId: req.user.id
-      }
+      where: { id, sellerId: req.user.id }
     });
 
     if (!order) {
@@ -294,38 +287,22 @@ exports.rejectOrder = async (req, res) => {
     }
 
     if (order.status !== 'pending') {
-      return ResponseHandler.error(
-        res,
-        'Cette commande ne peut plus être rejetée',
-        400
-      );
+      return ResponseHandler.error(res, 'Cette commande ne peut plus être rejetée', 400);
     }
 
-    await order.update({
-      status: 'rejected',
-      rejectionReason: reason
-    });
+    await order.update({ status: 'rejected', rejectionReason: reason });
 
-    // Notifier le client
     await db.Notification.create({
-      userId: order.customerId,
-      type: 'order_rejected',
-      title: 'Commande rejetée',
-      message: `Votre commande ${order.orderNumber} a été rejetée`,
-      data: {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        reason
-      },
-      priority: 'high',
+      userId:    order.customerId,
+      type:      'order_rejected',
+      title:     'Commande rejetée',
+      message:   `Votre commande ${order.orderNumber} a été rejetée`,
+      data:      { orderId: order.id, orderNumber: order.orderNumber, reason },
+      priority:  'high',
       actionUrl: `/client/orders/${order.id}`
     });
 
-    return ResponseHandler.success(
-      res,
-      'Commande rejetée',
-      order
-    );
+    return ResponseHandler.success(res, 'Commande rejetée', order);
   } catch (error) {
     console.error('Erreur rejet commande:', error);
     return ResponseHandler.error(res, 'Erreur lors du rejet', 500);
@@ -340,10 +317,7 @@ exports.completeOrder = async (req, res) => {
     const { id } = req.params;
 
     const order = await db.Order.findOne({
-      where: {
-        id,
-        sellerId: req.user.id
-      }
+      where: { id, sellerId: req.user.id }
     });
 
     if (!order) {
@@ -351,37 +325,22 @@ exports.completeOrder = async (req, res) => {
     }
 
     if (order.status !== 'accepted' && order.status !== 'in_delivery') {
-      return ResponseHandler.error(
-        res,
-        'Cette commande ne peut pas être complétée',
-        400
-      );
+      return ResponseHandler.error(res, 'Cette commande ne peut pas être complétée', 400);
     }
 
-    await order.update({
-      status: 'completed',
-      completedAt: new Date()
-    });
+    await order.update({ status: 'completed', completedAt: new Date() });
 
-    // Notifier le client
     await db.Notification.create({
-      userId: order.customerId,
-      type: 'order_completed',
-      title: 'Commande complétée',
-      message: `Votre commande ${order.orderNumber} a été livrée`,
-      data: {
-        orderId: order.id,
-        orderNumber: order.orderNumber
-      },
-      priority: 'medium',
+      userId:    order.customerId,
+      type:      'order_completed',
+      title:     'Commande complétée',
+      message:   `Votre commande ${order.orderNumber} a été livrée`,
+      data:      { orderId: order.id, orderNumber: order.orderNumber },
+      priority:  'medium',
       actionUrl: `/client/orders/${order.id}`
     });
 
-    return ResponseHandler.success(
-      res,
-      'Commande complétée',
-      order
-    );
+    return ResponseHandler.success(res, 'Commande complétée', order);
   } catch (error) {
     console.error('Erreur complétion commande:', error);
     return ResponseHandler.error(res, 'Erreur lors de la complétion', 500);
@@ -410,17 +369,12 @@ exports.getReviews = async (req, res) => {
       order: [['createdAt', 'DESC']]
     });
 
-    return ResponseHandler.success(
-      res,
-      'Avis récupérés',
-      { reviews }
-    );
+    return ResponseHandler.success(res, 'Avis récupérés', { reviews });
   } catch (error) {
     console.error('Erreur récupération avis:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
   }
 };
-
 
 // @desc    Obtenir le profil du revendeur
 // @route   GET /api/seller/profile
@@ -435,11 +389,7 @@ exports.getProfile = async (req, res) => {
       return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
     }
 
-    return ResponseHandler.success(
-      res,
-      'Profil récupéré',
-      { seller }
-    );
+    return ResponseHandler.success(res, 'Profil récupéré', { seller });
   } catch (error) {
     console.error('Erreur récupération profil:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);

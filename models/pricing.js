@@ -1,6 +1,9 @@
 // ==========================================
-// FICHIER: models/pricing.js (VERSION MISE À JOUR)
-// Modèle Pricing avec système d'accès 24h pour clients
+// FICHIER: models/pricing.js
+// ✅ REFONTE: Plans d'abonnement pour clients ET revendeurs
+//    - CLIENT : sans abonnement = 5 revendeurs max
+//    - REVENDEUR : visibilité sur la carte
+//    - Colonnes legacy conservées nullable pour migration sans downtime
 // ==========================================
 
 module.exports = (sequelize, DataTypes) => {
@@ -10,136 +13,111 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
-    
-    // Type de cible (client ou revendeur)
+
     targetRole: {
       type: DataTypes.ENUM('client', 'revendeur'),
       allowNull: false,
       unique: true
     },
-    
-    // ==========================================
-    // CONFIGURATION CLIENT (PAY-PER-ACCESS)
-    // ==========================================
-    
-    // Prix de l'accès 24h (pour clients)
-    accessPrice24h: {
-      type: DataTypes.DECIMAL(10, 2),
-      defaultValue: 0,
-      comment: '[CLIENT] Prix pour accès 24h'
-    },
-    
-    // Durée de l'accès en heures (pour clients)
-    accessDurationHours: {
-      type: DataTypes.INTEGER,
-      defaultValue: 24,
-      comment: '[CLIENT] Durée de l\'accès en heures'
-    },
-    
-    // ==========================================
-    // CONFIGURATION REVENDEUR (ABONNEMENT)
-    // ==========================================
-    
-    // Plans disponibles avec leurs prix (pour revendeurs)
+
+    // ── Plans d'abonnement (client ET revendeur) ──────────────────────────
     plans: {
       type: DataTypes.JSON,
       allowNull: false,
       defaultValue: {
-        weekly: { price: 0, duration: 7, enabled: false },
-        monthly: { price: 0, duration: 30, enabled: false },
-        quarterly: { price: 0, duration: 90, enabled: false },
-        yearly: { price: 0, duration: 365, enabled: false }
+        weekly:    { price: 0, duration: 7,   enabled: false },
+        monthly:   { price: 0, duration: 30,  enabled: false },
+        quarterly: { price: 0, duration: 90,  enabled: false },
+        yearly:    { price: 0, duration: 365, enabled: false }
       },
-      comment: '[REVENDEUR] Plans d\'abonnement disponibles'
+      comment: 'Plans disponibles (client ET revendeur)'
     },
-    
-    // Jours gratuits pour nouveaux utilisateurs (pour revendeurs)
+
+    // Jours gratuits à l'inscription (revendeur uniquement — toujours 0 pour client)
     freeTrialDays: {
       type: DataTypes.INTEGER,
-      defaultValue: 0,
-      comment: '[REVENDEUR] Jours gratuits à l\'inscription'
+      defaultValue: 0
     },
-    
-    // ==========================================
-    // CONFIGURATION COMMUNE
-    // ==========================================
-    
-    // Système activé ou non
+
+    // ── Config commune ────────────────────────────────────────────────────
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
-      comment: 'Si false, accès gratuit illimité pour tous'
+      comment: 'false = accès gratuit illimité pour tous'
     },
-    
-    // Date d'activation du système de tarification
+
     activatedAt: {
       type: DataTypes.DATE,
-      allowNull: true,
-      comment: 'Date de première activation de la tarification'
+      allowNull: true
     },
-    
-    // Options supplémentaires
+
     options: {
       type: DataTypes.JSON,
       defaultValue: {
-        // Pour revendeurs
-        autoRenew: true,
-        gracePeriodDays: 3,
-        notifyBeforeExpiry: 7,
-        // Pour clients
-        allowMultiplePurchases: true,
-        maxPurchasesPerDay: 10,
-        notifyBeforeAccessExpiry: 2 // en heures
+        autoRenew:          true,
+        gracePeriodDays:    3,
+        notifyBeforeExpiry: 7
       }
+    },
+
+    // ── Colonnes legacy (conservées nullable — à supprimer après migration) ─
+    accessPrice24h: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      defaultValue: null,
+      comment: '[DEPRECATED] Remplacé par plans'
+    },
+
+    accessDurationHours: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+      comment: '[DEPRECATED] Remplacé par plans'
     }
+
   }, {
     tableName: 'pricing',
     timestamps: true
   });
 
-  // Méthode pour obtenir le prix d'accès client
-  Pricing.getClientAccessPrice = async function() {
-    const config = await this.findOne({ 
-      where: { targetRole: 'client' } 
-    });
-    
+  // ── Méthodes statiques ──────────────────────────────────────────────────
+
+  /** Config client : plans activés + limite sans abonnement */
+  Pricing.getClientConfig = async function () {
+    const config = await this.findOne({ where: { targetRole: 'client' } });
     if (!config || !config.isActive) {
-      return {
-        isActive: false,
-        price: 0,
-        duration: 24,
-        message: 'Accès gratuit'
-      };
+      return { isActive: false, maxSellersWithoutSubscription: null, plans: {} };
     }
-    
+    const enabledPlans = Object.fromEntries(
+      Object.entries(config.plans || {}).filter(([, p]) => p.enabled)
+    );
     return {
       isActive: true,
-      price: parseFloat(config.accessPrice24h),
-      duration: config.accessDurationHours,
-      options: config.options
+      maxSellersWithoutSubscription: 5,
+      plans: enabledPlans,
+      options: config.options || {}
     };
   };
 
-  // Méthode pour obtenir la config revendeur
-  Pricing.getSellerConfig = async function() {
-    const config = await this.findOne({ 
-      where: { targetRole: 'revendeur' } 
-    });
-    
+  /** Config revendeur : plans + période d'essai */
+  Pricing.getSellerConfig = async function () {
+    const config = await this.findOne({ where: { targetRole: 'revendeur' } });
     if (!config || !config.isActive) {
-      return {
-        isActive: false,
-        freeTrialDays: 0,
-        plans: {}
-      };
+      return { isActive: false, freeTrialDays: 0, plans: {} };
     }
-    
     return {
       isActive: true,
-      freeTrialDays: config.freeTrialDays,
-      plans: config.plans,
-      options: config.options
+      freeTrialDays: config.freeTrialDays || 0,
+      plans: config.plans || {},
+      options: config.options || {}
     };
+  };
+
+  /** Prix minimum parmi les plans activés */
+  Pricing.getCheapestPlan = function (plans) {
+    const enabled = Object.values(plans || {}).filter(p => p.enabled);
+    if (!enabled.length) return null;
+    return enabled.reduce((min, p) => (p.price < min.price ? p : min), enabled[0]);
   };
 
   return Pricing;

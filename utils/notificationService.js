@@ -1,25 +1,21 @@
 // ==========================================
 // FICHIER: utils/notificationService.js
 // Service notifications — VERSION COMPLÈTE AVEC PUSH
+// ✅ AJOUT: notifyPaymentConfirmed (client + revendeur)
+// ✅ AJOUT: notifyProximityAlert (client)
 // ==========================================
 const PushService = require('./pushService');
 
 // ── Helper interne ────────────────────────────────────────────
-// Crée la notification en BDD ET envoie le push en séquence
 async function createNotif(data) {
   const db = require('../models');
   const notification = await db.Notification.create(data);
 
-  // ✅ FIX : await explicite au lieu de fire-and-forget
-  // Le .catch() précédent absorbait silencieusement les erreurs sans garantir
-  // que l'envoi avait eu lieu. Avec await, on s'assure que le push est tenté
-  // avant de retourner, et les erreurs sont loguées proprement.
   try {
     await PushService.sendToUser(data.userId, PushService.buildPayload(notification));
   } catch (err) {
     console.error('[Push] Erreur envoi:', err);
-    // On ne propage pas l'erreur — la notification BDD est créée,
-    // le push est best-effort et ne doit pas faire échouer la transaction.
+    // Best-effort : la notif BDD est créée, le push ne fait pas échouer la transaction.
   }
 
   return notification;
@@ -50,7 +46,14 @@ class NotificationService {
         type:      'new_order',
         title:     '🛒 Nouvelle commande reçue',
         message:   `${customerName} a passé une commande de ${itemsCount} produit(s) — ${parseFloat(order.total).toLocaleString()} FCFA`,
-        data:      { orderId: order.id, orderNumber: order.orderNumber, customerId: order.customerId, customerName, total: order.total, itemsCount },
+        data:      {
+          orderId:      order.id,
+          orderNumber:  order.orderNumber,
+          customerId:   order.customerId,
+          customerName,
+          total:        order.total,
+          itemsCount,
+        },
         priority:  'high',
         actionUrl: '/seller/orders',
       });
@@ -95,7 +98,13 @@ class NotificationService {
         type:      'stock_alert',
         title,
         message,
-        data:      { productId: product.id, brand: product.brand, bottleType: product.bottleType, quantity: product.quantity, previousQuantity },
+        data:      {
+          productId:        product.id,
+          brand:            product.brand,
+          bottleType:       product.bottleType,
+          quantity:         product.quantity,
+          previousQuantity,
+        },
         priority,
         actionUrl: '/seller/products',
       });
@@ -116,7 +125,11 @@ class NotificationService {
         type:      'order_accepted',
         title:     '✅ Commande acceptée',
         message:   `Votre commande ${order.orderNumber} a été acceptée par le revendeur`,
-        data:      { orderId: order.id, orderNumber: order.orderNumber, estimatedTime: order.estimatedTime },
+        data:      {
+          orderId:       order.id,
+          orderNumber:   order.orderNumber,
+          estimatedTime: order.estimatedTime,
+        },
         priority:  'high',
         actionUrl: `/client/orders/${order.id}`,
       });
@@ -136,7 +149,11 @@ class NotificationService {
         type:      'order_rejected',
         title:     '❌ Commande rejetée',
         message:   `Votre commande ${order.orderNumber} a été rejetée. Raison : ${order.rejectionReason}`,
-        data:      { orderId: order.id, orderNumber: order.orderNumber, rejectionReason: order.rejectionReason },
+        data:      {
+          orderId:         order.id,
+          orderNumber:     order.orderNumber,
+          rejectionReason: order.rejectionReason,
+        },
         priority:  'high',
         actionUrl: `/client/orders/${order.id}`,
       });
@@ -205,7 +222,12 @@ class NotificationService {
         type:      'order_expiring_warning',
         title,
         message:   `La commande ${order.orderNumber} expire dans ${hoursRemaining} heure(s). Répondez maintenant pour éviter l'annulation automatique.`,
-        data:      { orderId: order.id, orderNumber: order.orderNumber, hoursRemaining, expiresAt: order.expiresAt },
+        data:      {
+          orderId:        order.id,
+          orderNumber:    order.orderNumber,
+          hoursRemaining,
+          expiresAt:      order.expiresAt,
+        },
         priority,
         actionUrl: '/seller/orders',
       });
@@ -225,7 +247,11 @@ class NotificationService {
         type:      'order_expired',
         title:     '⏰ Commande expirée',
         message:   `Votre commande ${order.orderNumber} a été annulée : le revendeur n'a pas répondu dans les 24h. Vous pouvez repasser commande.`,
-        data:      { orderId: order.id, orderNumber: order.orderNumber, sellerName: order.seller?.businessName },
+        data:      {
+          orderId:     order.id,
+          orderNumber: order.orderNumber,
+          sellerName:  order.seller?.businessName,
+        },
         priority:  'high',
         actionUrl: `/client/orders/${order.id}`,
       });
@@ -245,7 +271,11 @@ class NotificationService {
         type:      'seller_order_expired',
         title:     '⚠️ Commande expirée par délai',
         message:   `La commande ${order.orderNumber} a été annulée automatiquement faute de réponse dans les 24h. Cela peut affecter votre réputation.`,
-        data:      { orderId: order.id, orderNumber: order.orderNumber, customerName: `${order.customer?.firstName} ${order.customer?.lastName}` },
+        data:      {
+          orderId:      order.id,
+          orderNumber:  order.orderNumber,
+          customerName: `${order.customer?.firstName} ${order.customer?.lastName}`,
+        },
         priority:  'high',
         actionUrl: '/seller/orders',
       });
@@ -276,7 +306,13 @@ class NotificationService {
         type:      'review_received',
         title:     '⭐ Nouvel avis reçu',
         message:   `${customerName} a laissé un avis ${stars} (${review.rating}/5)`,
-        data:      { reviewId: review.id, orderId: review.orderId, orderNumber: reviewWithDetails.order.orderNumber, rating: review.rating, customerName },
+        data:      {
+          reviewId:    review.id,
+          orderId:     review.orderId,
+          orderNumber: reviewWithDetails.order.orderNumber,
+          rating:      review.rating,
+          customerName,
+        },
         priority:  'medium',
         actionUrl: '/seller/reviews',
       });
@@ -343,6 +379,78 @@ class NotificationService {
       console.log(`✅ [Notif] Période de grâce (${daysRemaining}j)`);
     } catch (err) {
       console.error('❌ [Notif] notifyGracePeriod:', err);
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // ✅ NOUVEAU — PAIEMENT CONFIRMÉ (Client ET Revendeur)
+  //
+  // Appelée depuis paymentController après activation d'un abonnement.
+  // Fonctionne pour les deux rôles : le message s'adapte au type.
+  //
+  // Paramètres :
+  //   userId            — id de l'utilisateur à notifier
+  //   amount            — montant payé (number)
+  //   transactionNumber — ex: "TXN-1710000000000-ABC123"
+  //   planType          — 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+  //   planLabel         — ex: "Mensuel"
+  //   endDate           — date de fin formatée ex: "18/03/2027"
+  //   type              — 'seller_subscription' | 'client_subscription'
+  // ──────────────────────────────────────────────────────────
+  static async notifyPaymentConfirmed(userId, {
+    amount,
+    transactionNumber,
+    planType,
+    planLabel,
+    endDate,
+    type = 'client_subscription',
+  }) {
+    try {
+      const isSeller  = type === 'seller_subscription';
+      const actionUrl = isSeller ? '/seller/subscription' : '/client/payment-history';
+
+      await createNotif({
+        userId,
+        type:      'payment_confirmed',
+        title:     '💳 Paiement confirmé',
+        message:   `Votre abonnement ${planLabel} a été activé avec succès. Accès garanti jusqu'au ${endDate}.`,
+        data:      { amount, transactionNumber, planType, planLabel, endDate, subscriptionType: type },
+        priority:  'high',
+        actionUrl,
+      });
+      console.log(`✅ [Notif] Paiement confirmé — ${transactionNumber} (${type})`);
+    } catch (err) {
+      console.error('❌ [Notif] notifyPaymentConfirmed:', err);
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // ✅ NOUVEAU — ALERTE PROXIMITÉ (Client)
+  //
+  // Un dépôt proche vient de mettre à jour son stock.
+  // Appelée depuis le contrôleur produit ou un job de géolocalisation.
+  //
+  // Paramètres :
+  //   userId     — id du client à notifier
+  //   sellerName — nom du dépôt
+  //   distance   — distance en km (nombre, arrondi à 1 décimale)
+  //   products   — tableau de chaînes ex: ['Butane 6kg', 'Butane 12kg']
+  // ──────────────────────────────────────────────────────────
+  static async notifyProximityAlert(userId, { sellerName, distance, products = [] }) {
+    try {
+      const productList = products.slice(0, 2).join(', ');
+      await createNotif({
+        userId,
+        type:      'proximity_alert',
+        title:     '📍 Dépôt à proximité disponible',
+        message:   `${sellerName} (à ${distance} km) a du stock disponible${productList ? ` : ${productList}` : ''}.`,
+        data:      { sellerName, distance, products },
+        priority:  'medium',
+        actionUrl: '/client/map',
+      });
+      console.log(`✅ [Notif] Alerte proximité → user ${userId} (${sellerName})`);
+    } catch (err) {
+      console.error('❌ [Notif] notifyProximityAlert:', err);
     }
   }
 

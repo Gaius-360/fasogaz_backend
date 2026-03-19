@@ -1,57 +1,45 @@
 // ==========================================
 // FICHIER: controllers/adminPricingController.js
-// Contrôleur Admin pour gérer la tarification client et revendeur
+// ✅ REFONTE: updateClientPricing utilise plans (comme revendeur)
+//    Suppression: accessPrice24h, accessDurationHours
 // ==========================================
 
-const { Pricing, User, AccessPurchase, Subscription } = require('../models');
+const { Pricing, User, Subscription } = require('../models');
 const { Op } = require('sequelize');
 
 /**
  * @desc    Obtenir toute la configuration de tarification
  * @route   GET /api/admin/pricing
- * @access  Private/Admin
+ * @access  Admin
  */
 exports.getAllPricing = async (req, res) => {
   try {
-    let clientConfig = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
+    let clientConfig   = await Pricing.findOne({ where: { targetRole: 'client' } });
+    let revendeurConfig = await Pricing.findOne({ where: { targetRole: 'revendeur' } });
 
-    let revendeurConfig = await Pricing.findOne({ 
-      where: { targetRole: 'revendeur' } 
-    });
+    const defaultPlans = {
+      weekly:    { price: 0, duration: 7,   enabled: false },
+      monthly:   { price: 0, duration: 30,  enabled: false },
+      quarterly: { price: 0, duration: 90,  enabled: false },
+      yearly:    { price: 0, duration: 365, enabled: false }
+    };
 
-    // Créer les configs par défaut si elles n'existent pas
     if (!clientConfig) {
       clientConfig = await Pricing.create({
         targetRole: 'client',
-        isActive: false,
-        accessPrice24h: 500,
-        accessDurationHours: 24,
-        options: {
-          allowMultiplePurchases: true,
-          maxPurchasesPerDay: 10,
-          notifyBeforeAccessExpiry: 2
-        }
+        isActive:   false,
+        plans:      { ...defaultPlans, monthly: { price: 2500, duration: 30, enabled: true } },
+        options:    { autoRenew: true, gracePeriodDays: 3, notifyBeforeExpiry: 7 }
       });
     }
 
     if (!revendeurConfig) {
       revendeurConfig = await Pricing.create({
-        targetRole: 'revendeur',
-        isActive: false,
-        freeTrialDays: 7,
-        plans: {
-          weekly: { price: 1000, duration: 7, enabled: false },
-          monthly: { price: 3500, duration: 30, enabled: false },
-          quarterly: { price: 9000, duration: 90, enabled: false },
-          yearly: { price: 30000, duration: 365, enabled: false }
-        },
-        options: {
-          autoRenew: true,
-          gracePeriodDays: 3,
-          notifyBeforeExpiry: 7
-        }
+        targetRole:    'revendeur',
+        isActive:      false,
+        freeTrialDays: 0,
+        plans:         defaultPlans,
+        options:       { autoRenew: true, gracePeriodDays: 3, notifyBeforeExpiry: 7 }
       });
     }
 
@@ -59,92 +47,64 @@ exports.getAllPricing = async (req, res) => {
       success: true,
       data: {
         client: {
-          isActive: clientConfig.isActive,
-          accessPrice24h: parseFloat(clientConfig.accessPrice24h),
-          accessDurationHours: clientConfig.accessDurationHours,
-          options: clientConfig.options,
-          activatedAt: clientConfig.activatedAt
+          isActive:                     clientConfig.isActive,
+          maxSellersWithoutSubscription: 5,
+          plans:                        clientConfig.plans,
+          options:                      clientConfig.options,
+          activatedAt:                  clientConfig.activatedAt
         },
         revendeur: {
-          isActive: revendeurConfig.isActive,
-          freeTrialDays: revendeurConfig.freeTrialDays,
-          plans: revendeurConfig.plans,
-          options: revendeurConfig.options,
-          activatedAt: revendeurConfig.activatedAt
+          isActive:      revendeurConfig.isActive,
+          freeTrialDays: revendeurConfig.freeTrialDays || 0,
+          plans:         revendeurConfig.plans,
+          options:       revendeurConfig.options,
+          activatedAt:   revendeurConfig.activatedAt
         }
       }
     });
 
   } catch (error) {
     console.error('❌ Erreur récupération config:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la récupération',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };
 
 /**
- * @desc    Mettre à jour la tarification CLIENT (accès 24h)
+ * @desc    Mettre à jour la tarification CLIENT
  * @route   PUT /api/admin/pricing/client
- * @access  Private/Admin
+ * @access  Admin
  */
 exports.updateClientPricing = async (req, res) => {
   try {
-    const { 
-      isActive, 
-      accessPrice24h, 
-      accessDurationHours,
-      options 
-    } = req.body;
+    const { isActive, plans, options } = req.body;
 
-    // Validation
     if (typeof isActive !== 'boolean') {
-      return res.status(400).json({
-        success: false,
-        message: 'Le statut isActive est requis'
-      });
+      return res.status(400).json({ success: false, message: 'isActive (boolean) requis' });
     }
 
-    if (isActive) {
-      if (!accessPrice24h || accessPrice24h < 0) {
+    // Validation des plans si système activé
+    if (isActive && plans) {
+      const enabledPlans = Object.values(plans).filter(p => p.enabled);
+      if (enabledPlans.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Le prix doit être supérieur ou égal à 0'
+          message: 'Au moins un plan doit être activé quand le système est actif'
         });
       }
-
-      if (!accessDurationHours || accessDurationHours < 1) {
-        return res.status(400).json({
-          success: false,
-          message: 'La durée doit être d\'au moins 1 heure'
-        });
+      for (const [key, plan] of Object.entries(plans)) {
+        if (plan.enabled && (plan.price === undefined || plan.price < 0)) {
+          return res.status(400).json({ success: false, message: `Prix invalide pour le plan "${key}"` });
+        }
       }
     }
 
-    // Récupérer ou créer la config
-    let config = await Pricing.findOne({ 
-      where: { targetRole: 'client' } 
-    });
+    let config = await Pricing.findOne({ where: { targetRole: 'client' } });
 
-    const updateData = {
-      isActive,
-      accessPrice24h: parseFloat(accessPrice24h) || 0,
-      accessDurationHours: parseInt(accessDurationHours) || 24
-    };
-
-    // Si on active pour la première fois
+    const updateData = { isActive };
+    if (plans)   updateData.plans   = plans;
+    if (options) updateData.options = { ...(config?.options || {}), ...options };
     if (isActive && config && !config.isActive && !config.activatedAt) {
       updateData.activatedAt = new Date();
-    }
-
-    // Mettre à jour les options si fournies
-    if (options) {
-      updateData.options = {
-        ...config.options,
-        ...options
-      };
     }
 
     if (config) {
@@ -153,91 +113,54 @@ exports.updateClientPricing = async (req, res) => {
       config = await Pricing.create({
         targetRole: 'client',
         ...updateData,
-        options: options || {
-          allowMultiplePurchases: true,
-          maxPurchasesPerDay: 10,
-          notifyBeforeAccessExpiry: 2
-        }
+        plans:   plans || { monthly: { price: 2500, duration: 30, enabled: true } },
+        options: options || { autoRenew: true, gracePeriodDays: 3, notifyBeforeExpiry: 7 }
       });
-    }
-
-    // Si on désactive le système, informer les utilisateurs
-    if (!isActive) {
-      console.log('💡 Système de tarification client désactivé - Accès gratuit pour tous');
     }
 
     res.json({
       success: true,
-      message: isActive 
-        ? 'Tarification client activée avec succès'
-        : 'Tarification client désactivée - Accès gratuit pour tous',
+      message: isActive
+        ? '✅ Tarification client activée (sans abonnement = 5 revendeurs max)'
+        : '✅ Tarification client désactivée — Accès gratuit illimité',
       data: {
-        isActive: config.isActive,
-        accessPrice24h: parseFloat(config.accessPrice24h),
-        accessDurationHours: config.accessDurationHours,
-        options: config.options,
-        activatedAt: config.activatedAt
+        isActive:                     config.isActive,
+        maxSellersWithoutSubscription: 5,
+        plans:                        config.plans,
+        options:                      config.options,
+        activatedAt:                  config.activatedAt
       }
     });
 
   } catch (error) {
     console.error('❌ Erreur mise à jour config client:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la mise à jour',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };
 
 /**
- * @desc    Mettre à jour la tarification REVENDEUR (abonnements)
+ * @desc    Mettre à jour la tarification REVENDEUR
  * @route   PUT /api/admin/pricing/revendeur
- * @access  Private/Admin
+ * @access  Admin
  */
 exports.updateRevendeurPricing = async (req, res) => {
   try {
-    const { 
-      isActive, 
-      freeTrialDays,
-      plans,
-      options 
-    } = req.body;
+    const { isActive, freeTrialDays, plans, options } = req.body;
 
-    // Validation
     if (typeof isActive !== 'boolean') {
-      return res.status(400).json({
-        success: false,
-        message: 'Le statut isActive est requis'
-      });
+      return res.status(400).json({ success: false, message: 'isActive (boolean) requis' });
     }
 
-    // Récupérer ou créer la config
-    let config = await Pricing.findOne({ 
-      where: { targetRole: 'revendeur' } 
-    });
+    let config = await Pricing.findOne({ where: { targetRole: 'revendeur' } });
 
     const updateData = {
       isActive,
       freeTrialDays: parseInt(freeTrialDays) || 0
     };
-
-    // Si on active pour la première fois
+    if (plans)   updateData.plans   = plans;
+    if (options) updateData.options = { ...(config?.options || {}), ...options };
     if (isActive && config && !config.isActive && !config.activatedAt) {
       updateData.activatedAt = new Date();
-    }
-
-    // Mettre à jour les plans si fournis
-    if (plans) {
-      updateData.plans = plans;
-    }
-
-    // Mettre à jour les options si fournies
-    if (options) {
-      updateData.options = {
-        ...config.options,
-        ...options
-      };
     }
 
     if (config) {
@@ -246,229 +169,149 @@ exports.updateRevendeurPricing = async (req, res) => {
       config = await Pricing.create({
         targetRole: 'revendeur',
         ...updateData,
-        plans: plans || {
-          weekly: { price: 0, duration: 7, enabled: false },
-          monthly: { price: 0, duration: 30, enabled: false },
-          quarterly: { price: 0, duration: 90, enabled: false },
-          yearly: { price: 0, duration: 365, enabled: false }
-        },
-        options: options || {
-          autoRenew: true,
-          gracePeriodDays: 3,
-          notifyBeforeExpiry: 7
-        }
+        plans:   plans || { weekly: { price: 0, duration: 7, enabled: false }, monthly: { price: 0, duration: 30, enabled: false }, quarterly: { price: 0, duration: 90, enabled: false }, yearly: { price: 0, duration: 365, enabled: false } },
+        options: options || { autoRenew: true, gracePeriodDays: 3, notifyBeforeExpiry: 7 }
       });
     }
 
     res.json({
       success: true,
-      message: isActive 
-        ? 'Tarification revendeur activée avec succès'
-        : 'Tarification revendeur désactivée - Accès gratuit pour tous',
+      message: isActive
+        ? '✅ Tarification revendeur activée'
+        : '✅ Tarification revendeur désactivée — Accès gratuit illimité',
       data: {
-        isActive: config.isActive,
+        isActive:      config.isActive,
         freeTrialDays: config.freeTrialDays,
-        plans: config.plans,
-        options: config.options,
-        activatedAt: config.activatedAt
+        plans:         config.plans,
+        options:       config.options,
+        activatedAt:   config.activatedAt
       }
     });
 
   } catch (error) {
     console.error('❌ Erreur mise à jour config revendeur:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la mise à jour',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };
 
 /**
- * @desc    Obtenir les statistiques d'accès client
+ * @desc    Statistiques des abonnements clients
  * @route   GET /api/admin/pricing/client/stats
- * @access  Private/Admin
+ * @access  Admin
  */
 exports.getClientAccessStats = async (req, res) => {
   try {
-    // Total des achats
-    const totalPurchases = await AccessPurchase.count();
-
-    // Revenus totaux
-    const totalRevenue = await AccessPurchase.sum('amount', {
-      where: { status: 'completed' }
+    // Total abonnements clients (toutes les souscriptions où user.role = 'client')
+    const totalPurchases = await Subscription.count({
+      include: [{ model: User, as: 'user', where: { role: 'client' }, attributes: [] }]
     });
 
-    // Achats aujourd'hui
+    const totalRevenue = await Subscription.sum('amount', {
+      where:   { status: { [Op.in]: ['active', 'completed'] } },
+      include: [{ model: User, as: 'user', where: { role: 'client' }, attributes: [] }]
+    });
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
-    const purchasesToday = await AccessPurchase.count({
-      where: {
-        purchaseDate: {
-          [Op.gte]: today
-        }
-      }
+
+    const purchasesToday = await Subscription.count({
+      where:   { createdAt: { [Op.gte]: today } },
+      include: [{ model: User, as: 'user', where: { role: 'client' }, attributes: [] }]
     });
 
-    const revenueToday = await AccessPurchase.sum('amount', {
-      where: {
-        purchaseDate: {
-          [Op.gte]: today
-        },
-        status: 'completed'
-      }
+    const revenueToday = await Subscription.sum('amount', {
+      where:   { createdAt: { [Op.gte]: today }, status: { [Op.in]: ['active', 'completed'] } },
+      include: [{ model: User, as: 'user', where: { role: 'client' }, attributes: [] }]
     });
 
-    // Achats des 7 derniers jours
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    const purchasesWeek = await AccessPurchase.count({
-      where: {
-        purchaseDate: {
-          [Op.gte]: sevenDaysAgo
-        }
-      }
-    });
-
-    const revenueWeek = await AccessPurchase.sum('amount', {
-      where: {
-        purchaseDate: {
-          [Op.gte]: sevenDaysAgo
-        },
-        status: 'completed'
-      }
-    });
-
-    // Achats du mois
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const purchasesMonth = await AccessPurchase.count({
-      where: {
-        purchaseDate: {
-          [Op.gte]: thirtyDaysAgo
-        }
-      }
+    const purchasesMonth = await Subscription.count({
+      where:   { createdAt: { [Op.gte]: thirtyDaysAgo } },
+      include: [{ model: User, as: 'user', where: { role: 'client' }, attributes: [] }]
     });
 
-    const revenueMonth = await AccessPurchase.sum('amount', {
-      where: {
-        purchaseDate: {
-          [Op.gte]: thirtyDaysAgo
-        },
-        status: 'completed'
-      }
+    const revenueMonth = await Subscription.sum('amount', {
+      where:   { createdAt: { [Op.gte]: thirtyDaysAgo }, status: { [Op.in]: ['active', 'completed'] } },
+      include: [{ model: User, as: 'user', where: { role: 'client' }, attributes: [] }]
     });
 
-    // Clients avec accès actif
+    // Clients avec abonnement actif
     const activeClients = await User.count({
       where: {
-        role: 'client',
-        hasActiveAccess: true,
-        accessExpiryDate: {
-          [Op.gt]: new Date()
-        }
+        role:                'client',
+        subscriptionEndDate: { [Op.gt]: new Date() }
       }
     });
 
-    // Total clients
-    const totalClients = await User.count({
-      where: { role: 'client' }
-    });
-
-    // Méthodes de paiement populaires
-    const paymentMethods = await AccessPurchase.findAll({
-      attributes: [
-        'paymentMethod',
-        [AccessPurchase.sequelize.fn('COUNT', AccessPurchase.sequelize.col('id')), 'count'],
-        [AccessPurchase.sequelize.fn('SUM', AccessPurchase.sequelize.col('amount')), 'total']
-      ],
-      where: { status: 'completed' },
-      group: ['paymentMethod']
-    });
+    const totalClients = await User.count({ where: { role: 'client' } });
 
     res.json({
       success: true,
       data: {
         overview: {
           totalPurchases,
-          totalRevenue: parseFloat(totalRevenue || 0),
+          totalRevenue:   parseFloat(totalRevenue || 0),
           activeClients,
           totalClients,
-          conversionRate: totalClients > 0 
-            ? ((activeClients / totalClients) * 100).toFixed(2) 
+          conversionRate: totalClients > 0
+            ? ((activeClients / totalClients) * 100).toFixed(1)
             : 0
         },
         today: {
           purchases: purchasesToday,
-          revenue: parseFloat(revenueToday || 0)
-        },
-        week: {
-          purchases: purchasesWeek,
-          revenue: parseFloat(revenueWeek || 0)
+          revenue:   parseFloat(revenueToday || 0)
         },
         month: {
           purchases: purchasesMonth,
-          revenue: parseFloat(revenueMonth || 0)
-        },
-        paymentMethods: paymentMethods.map(pm => ({
-          method: pm.paymentMethod,
-          count: parseInt(pm.get('count')),
-          total: parseFloat(pm.get('total') || 0)
-        }))
+          revenue:   parseFloat(revenueMonth || 0)
+        }
       }
     });
 
   } catch (error) {
-    console.error('❌ Erreur stats accès:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la récupération',
-      error: error.message
-    });
+    console.error('❌ Erreur stats abonnements clients:', error);
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };
 
 /**
- * @desc    Obtenir l'historique des achats d'accès (admin)
+ * @desc    Historique des abonnements clients (admin)
  * @route   GET /api/admin/pricing/client/purchases
- * @access  Private/Admin
+ * @access  Admin
  */
 exports.getClientAccessPurchases = async (req, res) => {
   try {
-    const { page = 1, limit = 50, status, paymentMethod, userId } = req.query;
-
+    const { page = 1, limit = 50, status, planType, userId } = req.query;
     const offset = (page - 1) * limit;
+
     const where = {};
+    if (status)   where.status   = status;
+    if (planType) where.planType = planType;
+    if (userId)   where.userId   = userId;
 
-    if (status) where.status = status;
-    if (paymentMethod) where.paymentMethod = paymentMethod;
-    if (userId) where.userId = userId;
-
-    const { count, rows: purchases } = await AccessPurchase.findAndCountAll({
+    const { count, rows: subscriptions } = await Subscription.findAndCountAll({
       where,
-      include: [
-        {
-          model: User,
-          as: 'user',
-          attributes: ['id', 'firstName', 'lastName', 'phone', 'email']
-        }
-      ],
-      order: [['purchaseDate', 'DESC']],
-      limit: parseInt(limit),
+      include: [{
+        model:      User,
+        as:         'user',
+        where:      { role: 'client' },
+        attributes: ['id', 'firstName', 'lastName', 'phone', 'email']
+      }],
+      order:  [['createdAt', 'DESC']],
+      limit:  parseInt(limit),
       offset: parseInt(offset)
     });
 
     res.json({
       success: true,
       data: {
-        purchases,
+        purchases: subscriptions,
         pagination: {
-          total: count,
-          page: parseInt(page),
-          limit: parseInt(limit),
+          total:      count,
+          page:       parseInt(page),
+          limit:      parseInt(limit),
           totalPages: Math.ceil(count / limit)
         }
       }
@@ -476,11 +319,7 @@ exports.getClientAccessPurchases = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Erreur historique achats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur lors de la récupération',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Erreur serveur', error: error.message });
   }
 };
 

@@ -1,5 +1,8 @@
 // ==========================================
-// FICHIER: models/order.js - VERSION AVEC EXPIRATION
+// FICHIER: models/order.js
+// ✅ MODIFIÉ: Suppression du mode pickup
+//            deliveryMode = 'delivery' uniquement
+//            Suppression estimatedTime (non pertinent)
 // ==========================================
 module.exports = (sequelize, DataTypes) => {
   const Order = sequelize.define('Order', {
@@ -37,9 +40,11 @@ module.exports = (sequelize, DataTypes) => {
         key: 'id'
       }
     },
+    // ✅ MODIFIÉ: plus d'ENUM pickup/delivery, uniquement 'delivery'
     deliveryMode: {
-      type: DataTypes.ENUM('pickup', 'delivery'),
-      allowNull: false
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: 'delivery'
     },
     subtotal: {
       type: DataTypes.DECIMAL(10, 2),
@@ -53,8 +58,17 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false
     },
+    // ✅ MODIFIÉ: flux pending → accepted → in_delivery → completed
     status: {
-      type: DataTypes.ENUM('pending', 'accepted', 'in_delivery', 'completed', 'cancelled', 'rejected', 'expired'),
+      type: DataTypes.ENUM(
+        'pending',
+        'accepted',
+        'in_delivery',
+        'completed',
+        'cancelled',
+        'rejected',
+        'expired'
+      ),
       defaultValue: 'pending'
     },
     customerNote: {
@@ -65,15 +79,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    estimatedTime: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      comment: 'Temps estimé en minutes'
-    },
+    // ✅ SUPPRIMÉ: estimatedTime (non pertinent sans retrait sur place)
     expiresAt: {
       type: DataTypes.DATE,
       allowNull: true,
-      comment: 'Date et heure d\'expiration de la commande (24h après création)'
+      comment: 'Expiration automatique si le revendeur ne répond pas (24h)'
     },
     acceptedAt: {
       type: DataTypes.DATE,
@@ -89,18 +99,20 @@ module.exports = (sequelize, DataTypes) => {
     hooks: {
       beforeValidate: async (order) => {
         if (!order.orderNumber) {
-          // Générer un numéro de commande unique
           const timestamp = Date.now();
           const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
           order.orderNumber = `CMD${timestamp}${random}`;
         }
 
-        // ✅ NOUVEAU : Définir la date d'expiration (24h après création)
+        // Définir la date d'expiration (24h après création)
         if (!order.expiresAt && order.isNewRecord) {
           const expirationDate = new Date();
           expirationDate.setHours(expirationDate.getHours() + 24);
           order.expiresAt = expirationDate;
         }
+
+        // Forcer deliveryMode à 'delivery'
+        order.deliveryMode = 'delivery';
       }
     }
   });

@@ -1,159 +1,81 @@
 // ==========================================
 // FICHIER: middleware/adminAuth.js
-// Middleware de protection des routes admin - VERSION SÉCURISÉE
+// ✅ VERSION FINALE — Vérifie l'admin en BDD (plus de hardcoding)
 // ==========================================
 
 const jwt = require('jsonwebtoken');
+const db  = require('../models');
 const ResponseHandler = require('../utils/responseHandler');
 
-/**
- * Configuration admin (cohérente avec le contrôleur)
- */
-const ADMIN_CONFIG = {
-  id: 'admin-1',
-  username: process.env.ADMIN_USERNAME || 'admin',
-  role: 'admin',
-  firstName: process.env.ADMIN_FIRST_NAME || 'Admin',
-  lastName: process.env.ADMIN_LAST_NAME || 'Principal',
-  email: process.env.ADMIN_EMAIL || 'admin@gazbf.bf'
-};
-
-/**
- * Middleware pour protéger les routes admin
- * Vérifie le JWT et s'assure que l'utilisateur est admin
- */
+// ==========================================
+// protectAdmin : vérifie le JWT et l'existence en BDD
+// ==========================================
 exports.protectAdmin = async (req, res, next) => {
   try {
-    let token;
-
-    // 1. Récupérer le token depuis le header Authorization
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith('Bearer')
-    ) {
-      token = req.headers.authorization.split(' ')[1];
+    // 1. Extraire le token du header Authorization
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return ResponseHandler.error(res, 'Non autorisé - Authentification requise', 401);
     }
 
-    // 2. Vérifier la présence du token
-    if (!token) {
-      console.log('❌ [Admin Auth] Pas de token fourni', {
-        ip: req.ip,
-        path: req.path
-      });
-      
-      return ResponseHandler.error(
-        res,
-        'Non autorisé - Authentification requise',
-        401
-      );
-    }
+    const token = authHeader.split(' ')[1];
 
+    // 2. Vérifier et décoder le JWT (avec issuer/audience admin)
+    let decoded;
     try {
-      // 3. Vérifier et décoder le token
-      const decoded = jwt.verify(
-        token,
-        process.env.JWT_SECRET || 'dev_secret_change_in_production',
-        {
-          issuer: 'fasogaz-admin',
-          audience: 'admin-panel'
-        }
-      );
-
-      console.log('🔓 [Admin Auth] Token décodé:', {
-        id: decoded.id,
-        role: decoded.role,
-        username: decoded.username
+      decoded = jwt.verify(token, process.env.JWT_SECRET, {
+        issuer:   'fasogaz-admin',
+        audience: 'admin-panel'
       });
-
-      // 4. Vérifier que le token est pour un admin
-      if (decoded.role !== 'admin') {
-        console.log('❌ [Admin Auth] Rôle non admin:', decoded.role);
-        
-        return ResponseHandler.error(
-          res,
-          'Accès refusé - Droits administrateur requis',
-          403
-        );
-      }
-
-      // 5. Vérifier que l'ID correspond
-      if (decoded.id !== ADMIN_CONFIG.id) {
-        console.log('❌ [Admin Auth] ID admin invalide:', decoded.id);
-        
-        return ResponseHandler.error(
-          res,
-          'Admin non reconnu',
-          403
-        );
-      }
-
-      // 6. Attacher les informations admin à la requête
-      req.user = {
-        id: ADMIN_CONFIG.id,
-        username: ADMIN_CONFIG.username,
-        role: ADMIN_CONFIG.role,
-        firstName: ADMIN_CONFIG.firstName,
-        lastName: ADMIN_CONFIG.lastName,
-        email: ADMIN_CONFIG.email
-      };
-
-      console.log('✅ [Admin Auth] Admin authentifié:', {
-        username: ADMIN_CONFIG.username,
-        path: req.path
-      });
-
-      next();
-
     } catch (jwtError) {
-      // Gestion des erreurs JWT spécifiques
       if (jwtError.name === 'TokenExpiredError') {
-        console.log('❌ [Admin Auth] Token expiré');
-        return ResponseHandler.error(
-          res,
-          'Session expirée - Veuillez vous reconnecter',
-          401
-        );
+        return ResponseHandler.error(res, 'Session expirée - Veuillez vous reconnecter', 401);
       }
-
-      if (jwtError.name === 'JsonWebTokenError') {
-        console.log('❌ [Admin Auth] Token invalide:', jwtError.message);
-        return ResponseHandler.error(
-          res,
-          'Token invalide',
-          401
-        );
-      }
-
-      console.error('❌ [Admin Auth] Erreur JWT:', jwtError);
-      return ResponseHandler.error(
-        res,
-        'Erreur d\'authentification',
-        401
-      );
+      return ResponseHandler.error(res, 'Token invalide', 401);
     }
+
+    // 3. Vérifier le rôle dans le payload du token
+    if (decoded.role !== 'admin') {
+      return ResponseHandler.error(res, 'Accès refusé - Droits administrateur requis', 403);
+    }
+
+    // 4. Vérifier que l'admin existe toujours en BDD et est actif
+    const admin = await db.User.findOne({
+      where: { id: decoded.id, role: 'admin' },
+      attributes: { exclude: ['password', 'otp', 'otpExpiry'] }
+    });
+
+    if (!admin) {
+      return ResponseHandler.error(res, 'Administrateur non trouvé', 403);
+    }
+
+    if (!admin.isActive) {
+      return ResponseHandler.error(res, 'Compte administrateur désactivé', 403);
+    }
+
+    // 5. Attacher l'admin à la requête pour les contrôleurs suivants
+    req.user = admin;
+    next();
 
   } catch (error) {
-    console.error('❌ [Admin Auth] Erreur middleware:', error);
-    return ResponseHandler.error(
-      res,
-      'Erreur serveur',
-      500
-    );
+    console.error('❌ Erreur middleware admin:', error);
+    return ResponseHandler.error(res, 'Erreur serveur', 500);
   }
 };
 
-/**
- * Middleware optionnel pour logger les actions admin
- */
+// ==========================================
+// logAdminAction : middleware de log des actions admin
+// ==========================================
 exports.logAdminAction = (action) => {
   return (req, res, next) => {
     console.log('📝 [Admin Action]', {
       action,
-      admin: req.user?.username,
-      ip: req.ip,
-      timestamp: new Date().toISOString(),
-      path: req.path,
-      method: req.method
+      adminId:    req.user?.id,
+      adminEmail: req.user?.email,
+      ip:         req.ip,
+      timestamp:  new Date().toISOString(),
+      path:       req.path,
+      method:     req.method
     });
     next();
   };

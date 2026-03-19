@@ -1,6 +1,6 @@
 // ==========================================
 // FICHIER: controllers/addressController.js
-// Contrôleur des adresses avec GPS automatique
+// ✅ MODIFIÉ: Ajout du champ quarter (création + mise à jour)
 // ==========================================
 
 const db = require('../models');
@@ -14,6 +14,7 @@ exports.createAddress = async (req, res) => {
     const {
       label,
       city,
+      quarter,       // ✅ NOUVEAU
       latitude,
       longitude,
       phoneNumber,
@@ -21,48 +22,26 @@ exports.createAddress = async (req, res) => {
       isDefault
     } = req.body;
 
-    // Validation
     if (!label || !city) {
-      return ResponseHandler.error(
-        res,
-        'Le nom et la ville sont obligatoires',
-        400
-      );
+      return ResponseHandler.error(res, 'Le nom et la ville sont obligatoires', 400);
     }
-
-    // Validation GPS
     if (!latitude || !longitude) {
-      return ResponseHandler.error(
-        res,
-        'Les coordonnées GPS sont obligatoires',
-        400
-      );
+      return ResponseHandler.error(res, 'Les coordonnées GPS sont obligatoires', 400);
     }
 
-    // Validation des coordonnées GPS
     const lat = parseFloat(latitude);
     const lon = parseFloat(longitude);
 
     if (isNaN(lat) || lat < -90 || lat > 90) {
-      return ResponseHandler.error(
-        res,
-        'Latitude invalide (doit être entre -90 et 90)',
-        400
-      );
+      return ResponseHandler.error(res, 'Latitude invalide (doit être entre -90 et 90)', 400);
     }
-
     if (isNaN(lon) || lon < -180 || lon > 180) {
-      return ResponseHandler.error(
-        res,
-        'Longitude invalide (doit être entre -180 et 180)',
-        400
-      );
+      return ResponseHandler.error(res, 'Longitude invalide (doit être entre -180 et 180)', 400);
     }
 
-    // ✅ Générer automatiquement fullAddress (ville uniquement)
-    const fullAddress = city;
+    // ✅ fullAddress inclut le quartier s'il est disponible
+    const fullAddress = quarter ? `${quarter}, ${city}` : city;
 
-    // Si isDefault est true, mettre à jour les autres adresses
     if (isDefault) {
       await db.Address.update(
         { isDefault: false },
@@ -73,21 +52,17 @@ exports.createAddress = async (req, res) => {
     const address = await db.Address.create({
       userId: req.user.id,
       label,
-      fullAddress, // Généré automatiquement
+      fullAddress,
       city,
-      latitude: lat,
-      longitude: lon,
+      quarter:        quarter || null,   // ✅ NOUVEAU
+      latitude:       lat,
+      longitude:      lon,
       phoneNumber,
       additionalInfo,
-      isDefault: isDefault || false
+      isDefault:      isDefault || false
     });
 
-    return ResponseHandler.success(
-      res,
-      'Adresse créée avec succès',
-      address,
-      201
-    );
+    return ResponseHandler.success(res, 'Adresse créée avec succès', address, 201);
   } catch (error) {
     console.error('Erreur création adresse:', error);
     return ResponseHandler.error(res, 'Erreur lors de la création', 500);
@@ -101,17 +76,9 @@ exports.getMyAddresses = async (req, res) => {
   try {
     const addresses = await db.Address.findAll({
       where: { userId: req.user.id },
-      order: [
-        ['isDefault', 'DESC'],
-        ['createdAt', 'DESC']
-      ]
+      order: [['isDefault', 'DESC'], ['createdAt', 'DESC']]
     });
-
-    return ResponseHandler.success(
-      res,
-      'Adresses récupérées',
-      addresses
-    );
+    return ResponseHandler.success(res, 'Adresses récupérées', addresses);
   } catch (error) {
     console.error('Erreur récupération adresses:', error);
     return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
@@ -123,19 +90,10 @@ exports.getMyAddresses = async (req, res) => {
 // @access  Private
 exports.getAddressById = async (req, res) => {
   try {
-    const { id } = req.params;
-
     const address = await db.Address.findOne({
-      where: {
-        id,
-        userId: req.user.id
-      }
+      where: { id: req.params.id, userId: req.user.id }
     });
-
-    if (!address) {
-      return ResponseHandler.error(res, 'Adresse non trouvée', 404);
-    }
-
+    if (!address) return ResponseHandler.error(res, 'Adresse non trouvée', 404);
     return ResponseHandler.success(res, 'Adresse récupérée', address);
   } catch (error) {
     console.error('Erreur récupération adresse:', error);
@@ -148,22 +106,15 @@ exports.getAddressById = async (req, res) => {
 // @access  Private
 exports.updateAddress = async (req, res) => {
   try {
-    const { id } = req.params;
-
     const address = await db.Address.findOne({
-      where: {
-        id,
-        userId: req.user.id
-      }
+      where: { id: req.params.id, userId: req.user.id }
     });
-
-    if (!address) {
-      return ResponseHandler.error(res, 'Adresse non trouvée', 404);
-    }
+    if (!address) return ResponseHandler.error(res, 'Adresse non trouvée', 404);
 
     const {
       label,
       city,
+      quarter,       // ✅ NOUVEAU
       latitude,
       longitude,
       phoneNumber,
@@ -173,42 +124,30 @@ exports.updateAddress = async (req, res) => {
 
     const updates = {};
 
-    // Champs de base
-    if (label !== undefined) updates.label = label;
-    if (city !== undefined) updates.city = city;
-    if (phoneNumber !== undefined) updates.phoneNumber = phoneNumber;
+    if (label          !== undefined) updates.label          = label;
+    if (city           !== undefined) updates.city           = city;
+    if (quarter        !== undefined) updates.quarter        = quarter || null;  // ✅ NOUVEAU
+    if (phoneNumber    !== undefined) updates.phoneNumber    = phoneNumber;
     if (additionalInfo !== undefined) updates.additionalInfo = additionalInfo;
 
-    // Coordonnées GPS
     if (latitude !== undefined && latitude !== null) {
       const lat = parseFloat(latitude);
-      if (isNaN(lat) || lat < -90 || lat > 90) {
-        return ResponseHandler.error(
-          res,
-          'Latitude invalide (doit être entre -90 et 90)',
-          400
-        );
-      }
+      if (isNaN(lat) || lat < -90 || lat > 90)
+        return ResponseHandler.error(res, 'Latitude invalide', 400);
       updates.latitude = lat;
     }
-
     if (longitude !== undefined && longitude !== null) {
       const lon = parseFloat(longitude);
-      if (isNaN(lon) || lon < -180 || lon > 180) {
-        return ResponseHandler.error(
-          res,
-          'Longitude invalide (doit être entre -180 et 180)',
-          400
-        );
-      }
+      if (isNaN(lon) || lon < -180 || lon > 180)
+        return ResponseHandler.error(res, 'Longitude invalide', 400);
       updates.longitude = lon;
     }
 
-    // ✅ Régénérer fullAddress si city change (ville uniquement)
-    const newCity = city || address.city;
-    updates.fullAddress = newCity;
+    // ✅ Reconstruire fullAddress avec le quartier éventuel
+    const newCity    = city    ?? address.city;
+    const newQuarter = quarter ?? address.quarter;
+    updates.fullAddress = newQuarter ? `${newQuarter}, ${newCity}` : newCity;
 
-    // Si isDefault est défini
     if (isDefault !== undefined) {
       if (isDefault) {
         await db.Address.update(
@@ -221,11 +160,7 @@ exports.updateAddress = async (req, res) => {
 
     await address.update(updates);
 
-    return ResponseHandler.success(
-      res,
-      'Adresse mise à jour',
-      address
-    );
+    return ResponseHandler.success(res, 'Adresse mise à jour', address);
   } catch (error) {
     console.error('Erreur mise à jour adresse:', error);
     return ResponseHandler.error(res, 'Erreur lors de la mise à jour', 500);
@@ -237,21 +172,11 @@ exports.updateAddress = async (req, res) => {
 // @access  Private
 exports.deleteAddress = async (req, res) => {
   try {
-    const { id } = req.params;
-
     const address = await db.Address.findOne({
-      where: {
-        id,
-        userId: req.user.id
-      }
+      where: { id: req.params.id, userId: req.user.id }
     });
-
-    if (!address) {
-      return ResponseHandler.error(res, 'Adresse non trouvée', 404);
-    }
-
+    if (!address) return ResponseHandler.error(res, 'Adresse non trouvée', 404);
     await address.destroy();
-
     return ResponseHandler.success(res, 'Adresse supprimée');
   } catch (error) {
     console.error('Erreur suppression adresse:', error);
@@ -264,35 +189,20 @@ exports.deleteAddress = async (req, res) => {
 // @access  Private
 exports.setDefaultAddress = async (req, res) => {
   try {
-    const { id } = req.params;
-
     const address = await db.Address.findOne({
-      where: {
-        id,
-        userId: req.user.id
-      }
+      where: { id: req.params.id, userId: req.user.id }
     });
+    if (!address) return ResponseHandler.error(res, 'Adresse non trouvée', 404);
 
-    if (!address) {
-      return ResponseHandler.error(res, 'Adresse non trouvée', 404);
-    }
-
-    // Retirer le statut par défaut de toutes les adresses
     await db.Address.update(
       { isDefault: false },
       { where: { userId: req.user.id } }
     );
-
-    // Définir cette adresse comme par défaut
     await address.update({ isDefault: true });
 
-    return ResponseHandler.success(
-      res,
-      'Adresse définie par défaut',
-      address
-    );
+    return ResponseHandler.success(res, 'Adresse définie par défaut', address);
   } catch (error) {
     console.error('Erreur définition adresse par défaut:', error);
-    return ResponseHandler.error(res, 'Erreur lors de l\'opération', 500);
+    return ResponseHandler.error(res, "Erreur lors de l'opération", 500);
   }
 };

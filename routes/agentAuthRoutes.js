@@ -1,50 +1,24 @@
 // ==========================================
 // FICHIER: routes/agentAuthRoutes.js
-// Routes d'authentification pour les agents terrain
+// ✅ Rate limiting sur le login agent
 // ==========================================
 
 const express = require('express');
-const router = express.Router();
-const agentAuthController = require('../controllers/agentAuthController');
-const { protectAgent } = require('../middleware/agentAuth');
+const router  = express.Router();
 
-// ==========================================
-// ROUTES PUBLIQUES
-// ==========================================
+const {
+  agentLogin, verifyAgentCode,
+  getAgentProfile, updateAgentProfile
+} = require('../controllers/agentAuthController');
 
-/**
- * @route   POST /api/agent/auth/login
- * @desc    Connexion d'un agent avec son code
- * @access  Public
- * @body    { agentCode: "AG-XXXXXXXX" }
- */
-router.post('/login', agentAuthController.agentLogin);
+const { protectAgent }      = require('../middleware/agentAuth');
+const { agentLoginLimiter } = require('../middleware/rateLimiter');
 
-/**
- * @route   POST /api/agent/auth/verify-code
- * @desc    Vérifier la validité d'un code agent (pour le frontend)
- * @access  Public
- * @body    { agentCode: "AG-XXXXXXXX" }
- */
-router.post('/verify-code', agentAuthController.verifyAgentCode);
+// ✅ 10 tentatives / 15 min
+router.post('/login',        agentLoginLimiter, agentLogin);
+router.post('/verify-code',  verifyAgentCode);    // lecture seule — pas de secret
 
-// ==========================================
-// ROUTES PROTÉGÉES (Agent authentifié)
-// ==========================================
-
-/**
- * @route   GET /api/agent/auth/profile
- * @desc    Obtenir le profil de l'agent connecté avec stats
- * @access  Private (Agent)
- */
-router.get('/profile', protectAgent, agentAuthController.getAgentProfile);
-
-/**
- * @route   PUT /api/agent/auth/profile
- * @desc    Mettre à jour le profil de l'agent (email, téléphone)
- * @access  Private (Agent)
- * @body    { email?, phone? }
- */
-router.put('/profile', protectAgent, agentAuthController.updateAgentProfile);
+router.get('/profile',       protectAgent, getAgentProfile);
+router.put('/profile',       protectAgent, updateAgentProfile);
 
 module.exports = router;

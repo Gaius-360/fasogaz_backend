@@ -1,49 +1,31 @@
 // ==========================================
 // FICHIER: routes/accessRoutes.js
-// Routes pour la gestion des accès 24h (clients)
+// ✅ REFONTE: Abonnement classique client
+//    Supprimé: POST /purchase (direct)
+//    Paiement → POST /api/payments/initiate { type: 'client_subscription' }
 // ==========================================
 
-const express = require('express');
-const router = express.Router();
-const accessController = require('../controllers/accessController');
+const express    = require('express');
+const router     = express.Router();
+const controller = require('../controllers/accessController');
 const { protect } = require('../middleware/auth');
 
-// ==========================================
-// ROUTES PUBLIQUES
-// ==========================================
+// ── Routes publiques ───────────────────────────────────────────────────────
+router.get('/pricing', controller.getPricing);
 
-// Obtenir la tarification (prix de l'accès 24h)
-router.get('/pricing', accessController.getPricing);
+// ── Routes protégées ───────────────────────────────────────────────────────
+router.use(protect);
 
-// ==========================================
-// ROUTES PROTÉGÉES (CLIENT UNIQUEMENT)
-// ==========================================
-
-router.use(protect); // Toutes les routes suivantes nécessitent authentification
-
-// Middleware pour vérifier que l'utilisateur est un client
 const clientOnly = (req, res, next) => {
   if (req.user.role !== 'client') {
-    return res.status(403).json({
-      success: false,
-      message: 'Accès réservé aux clients uniquement'
-    });
+    return res.status(403).json({ success: false, message: 'Accès réservé aux clients' });
   }
   next();
 };
-
 router.use(clientOnly);
 
-// Vérifier le statut d'accès actuel
-router.get('/status', accessController.checkAccessStatus);
-
-// Acheter un accès 24h
-router.post('/purchase', accessController.purchaseAccess);
-
-// Historique des achats
-router.get('/history', accessController.getAccessHistory);
-
-// Statistiques d'accès
-router.get('/stats', accessController.getAccessStats);
+router.get('/status',  controller.checkAccessStatus);
+router.get('/history', controller.getAccessHistory);
+router.get('/stats',   controller.getAccessStats);
 
 module.exports = router;
