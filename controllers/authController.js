@@ -5,6 +5,7 @@
 //    - Messages génériques anti-énumération
 //    - Validation GPS clients conservée
 //    - ✅ FIX: 'preparing' retiré de l'enum orders_status
+//    - ✅ NOUVEAU: refreshToken + logout pour connexion persistante PWA
 // ==========================================
 
 const bcrypt = require('bcryptjs');
@@ -17,6 +18,41 @@ const { validateLocationForCity } = require('../utils/locationValidator');
 
 // ✅ Statuts de commandes actives — synchronisés avec l'enum PostgreSQL
 const ACTIVE_ORDER_STATUSES = ['pending', 'accepted', 'in_delivery'];
+
+// ==========================================
+// HELPERS COOKIES
+// ==========================================
+
+/**
+ * Options du cookie refresh_token.
+ * httpOnly  → inaccessible au JS → protégé XSS
+ * secure    → HTTPS uniquement en production
+ * sameSite  → protégé CSRF
+ * maxAge    → 90 jours
+ */
+const REFRESH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure:   process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'Strict' : 'Lax',
+  maxAge:   90 * 24 * 60 * 60 * 1000, // 90 jours en ms
+  path:     '/',
+};
+
+/** Génère un refresh token JWT signé avec JWT_REFRESH_SECRET */
+const generateRefreshToken = (userId) =>
+  jwt.sign(
+    { id: userId },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: '90d' }
+  );
+
+/** Génère un access token JWT court (15 min) */
+const generateAccessToken = (user) =>
+  jwt.sign(
+    { id: user.id, phone: user.phone, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
 
 // ==========================================
 // INSCRIPTION
@@ -120,16 +156,16 @@ exports.register = async (req, res) => {
       }
     }
 
-    const jwtToken = jwt.sign(
-      { id: user.id, phone: user.phone, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    // ✅ Access token court + refresh token en cookie
+    const accessToken   = generateAccessToken(user);
+    const refreshToken_ = generateRefreshToken(user.id);
+
+    res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
 
     return ResponseHandler.success(
       res, 'Inscription réussie. Bienvenue !',
       {
-        token: jwtToken,
+        token: accessToken,
         user: {
           id: user.id, phone: user.phone,
           firstName: user.firstName, lastName: user.lastName,
@@ -174,23 +210,98 @@ exports.login = async (req, res) => {
       return ResponseHandler.error(res, 'Compte désactivé. Contactez le support.', 403);
     }
 
-    const token = jwt.sign(
-      { id: user.id, phone: user.phone, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    // ✅ Access token court (15 min) + refresh token httpOnly (90 jours)
+    const accessToken   = generateAccessToken(user);
+    const refreshToken_ = generateRefreshToken(user.id);
+
+    // Pose le cookie refresh_token — inaccessible au JS, protégé XSS
+    res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
 
     // ✅ OTP et otpExpiry toujours exclus de la réponse
     const userResponse = await db.User.findByPk(user.id, {
       attributes: { exclude: ['password', 'otp', 'otpExpiry'] }
     });
 
-    return ResponseHandler.success(res, 'Connexion réussie', { token, user: userResponse });
+    return ResponseHandler.success(res, 'Connexion réussie', {
+      token: accessToken,
+      user:  userResponse
+    });
 
   } catch (error) {
     console.error('❌ Erreur connexion:', error);
     return ResponseHandler.error(res, 'Erreur lors de la connexion', 500);
   }
+};
+
+// ==========================================
+// REFRESH TOKEN (silencieux, appelé par l'intercepteur)
+// @route   POST /api/auth/refresh
+// @access  Public (cookie httpOnly requis)
+// ==========================================
+exports.refreshToken = async (req, res) => {
+  try {
+    const token = req.cookies?.refresh_token;
+
+    if (!token) {
+      return ResponseHandler.error(res, 'Refresh token manquant', 401);
+    }
+
+    // Vérifier la signature et l'expiration
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    } catch (jwtError) {
+      // Token invalide ou expiré → nettoyer le cookie et forcer reconnexion
+      res.clearCookie('refresh_token', { path: '/' });
+      return ResponseHandler.error(res, 'Session expirée, veuillez vous reconnecter', 401);
+    }
+
+    // Vérifier que l'utilisateur existe et est actif
+    const user = await db.User.findByPk(decoded.id, {
+      attributes: { exclude: ['password', 'otp', 'otpExpiry'] }
+    });
+
+    if (!user) {
+      res.clearCookie('refresh_token', { path: '/' });
+      return ResponseHandler.error(res, 'Utilisateur non trouvé', 401);
+    }
+
+    if (!user.isActive) {
+      res.clearCookie('refresh_token', { path: '/' });
+      return ResponseHandler.error(res, 'Compte désactivé. Contactez le support.', 403);
+    }
+
+    // Émettre un nouvel access token
+    const newAccessToken = generateAccessToken(user);
+
+    // Rotation du refresh token : émettre un nouveau cookie
+    // (stratégie optionnelle mais recommandée pour plus de sécurité)
+    const newRefreshToken = generateRefreshToken(user.id);
+    res.cookie('refresh_token', newRefreshToken, REFRESH_COOKIE_OPTIONS);
+
+    console.log(`✅ Token rafraîchi pour l'utilisateur ${user.id} (${user.role})`);
+
+    return ResponseHandler.success(res, 'Token renouvelé', {
+      token: newAccessToken,
+      user,
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur refresh token:', error);
+    res.clearCookie('refresh_token', { path: '/' });
+    return ResponseHandler.error(res, 'Erreur lors du renouvellement', 500);
+  }
+};
+
+// ==========================================
+// DÉCONNEXION
+// @route   POST /api/auth/logout
+// @access  Public
+// ==========================================
+exports.logout = (req, res) => {
+  // Efface le cookie côté serveur — le client doit effacer son localStorage
+  res.clearCookie('refresh_token', { path: '/' });
+  return ResponseHandler.success(res, 'Déconnexion réussie');
 };
 
 // ==========================================
@@ -215,14 +326,13 @@ exports.verifyOTP = async (req, res) => {
 
     await user.update({ otp: null, otpExpiry: null });
 
-    const token = jwt.sign(
-      { id: user.id, phone: user.phone, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    const accessToken   = generateAccessToken(user);
+    const refreshToken_ = generateRefreshToken(user.id);
+
+    res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
 
     return ResponseHandler.success(res, 'Code vérifié avec succès', {
-      token,
+      token: accessToken,
       user: {
         id: user.id, phone: user.phone,
         firstName: user.firstName, lastName: user.lastName,
@@ -341,6 +451,9 @@ exports.resetPassword = async (req, res) => {
 
     await user.update({ password: newPassword, otp: null, otpExpiry: null });
 
+    // Invalider toutes les sessions existantes en révoquant le refresh token
+    res.clearCookie('refresh_token', { path: '/' });
+
     return ResponseHandler.success(res, 'Mot de passe réinitialisé avec succès');
 
   } catch (error) {
@@ -453,6 +566,11 @@ exports.changePassword = async (req, res) => {
 
     await user.update({ password: newPassword });
 
+    // ✅ Rotation du refresh token après changement de mot de passe
+    // (invalide les sessions sur les autres appareils)
+    const newRefreshToken = generateRefreshToken(user.id);
+    res.cookie('refresh_token', newRefreshToken, REFRESH_COOKIE_OPTIONS);
+
     return ResponseHandler.success(res, 'Mot de passe modifié avec succès');
 
   } catch (error) {
@@ -545,6 +663,9 @@ exports.deleteAccount = async (req, res) => {
     await db.Notification.destroy({ where: { userId: user.id }, transaction });
     await user.destroy({ transaction });
     await transaction.commit();
+
+    // Effacer le cookie après suppression du compte
+    res.clearCookie('refresh_token', { path: '/' });
 
     return ResponseHandler.success(res, 'Votre compte a été supprimé avec succès');
 

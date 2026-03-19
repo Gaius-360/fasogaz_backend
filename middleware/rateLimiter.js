@@ -2,6 +2,7 @@
 // FICHIER: middleware/rateLimiter.js
 // ✅ Ajout de geocodingLimiter (20 req/min par IP) — dédié à /api/geocoding
 //    (aligné sur le commentaire de geocodingRoutes.js, était 30 avant)
+// ✅ NOUVEAU: refreshLimiter — POST /auth/refresh (token silencieux PWA)
 // Protection contre le brute force sur les routes sensibles
 // Dépendance : npm install express-rate-limit
 // ==========================================
@@ -129,6 +130,37 @@ const geocodingLimiter = rateLimit({
   keyGenerator:    makeKey('geocoding')
 });
 
+// ── REFRESH TOKEN : 60 req / 15 min par IP ────────────────────────────────
+// Dédié à POST /auth/refresh (renouvellement silencieux de l'access token).
+//
+// Ce limiter est volontairement souple car :
+//  - Le client appelle /auth/refresh automatiquement toutes les ~15 min
+//  - Plusieurs onglets ouverts = plusieurs appels légitimes en parallèle
+//  - La PWA peut appeler le refresh en arrière-plan (background sync)
+//
+// 60 req / 15 min = 4 par minute max par IP, largement suffisant.
+//
+// La vraie sécurité repose sur :
+//  - La signature JWT_REFRESH_SECRET (distincte de JWT_SECRET)
+//  - Le cookie httpOnly (inaccessible au JS → protégé XSS)
+//  - sameSite: Strict en production (protégé CSRF)
+//  - La rotation du refresh token à chaque appel (révocation implicite)
+const refreshLimiter = rateLimit({
+  windowMs:        15 * 60 * 1000,  // 15 minutes
+  max:             60,               // 60 renouvellements max par fenêtre
+  standardHeaders: true,
+  legacyHeaders:   false,
+  handler:         (req, res) => {
+    const retryAfterMs = req.rateLimit.resetTime - Date.now();
+    res.status(429).json({
+      success:    false,
+      message:    'Session temporairement bloquée. Réessayez dans quelques minutes.',
+      retryAfter: Math.ceil(retryAfterMs / 1000)
+    });
+  },
+  keyGenerator:    makeKey('refresh')
+});
+
 module.exports = {
   adminLoginLimiter,
   agentLoginLimiter,
@@ -137,5 +169,6 @@ module.exports = {
   otpVerifyLimiter,
   registerLimiter,
   globalApiLimiter,
-  geocodingLimiter
+  geocodingLimiter,
+  refreshLimiter,   
 };

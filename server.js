@@ -1,12 +1,14 @@
 // ==========================================
 // FICHIER: server.js
 // ✅ VERSION FINALE — Rate limiting global actif
+// ✅ AJOUT: cookie-parser pour les refresh tokens httpOnly
 // ==========================================
 
-const express  = require('express');
-const dotenv   = require('dotenv');
-const cors     = require('cors');
-const db       = require('./models');
+const express      = require('express');
+const dotenv       = require('dotenv');
+const cors         = require('cors');
+const cookieParser = require('cookie-parser'); // ✅ NOUVEAU
+const db           = require('./models');
 const errorHandler = require('./middleware/errorHandler');
 
 const { startSubscriptionJobs }    = require('./jobs/subscriptionJobs');
@@ -35,13 +37,14 @@ app.use(cors({
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error(`CORS bloqué pour l'origine: ${origin}`));
   },
-  credentials: true,
+  credentials: true, // ✅ OBLIGATOIRE pour que les cookies soient transmis cross-origin
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser()); // ✅ NOUVEAU — doit être AVANT les routes
 
 // ✅ Rate limit global sur toutes les routes /api (100 req / 15 min)
 app.use('/api', globalApiLimiter);
@@ -81,7 +84,7 @@ app.use('/api/subscriptions',  require('./routes/subscriptionRoutes'));
 app.use('/api/reviews',        require('./routes/reviewRoutes'));
 app.use('/api/addresses',      require('./routes/addressRoutes'));
 app.use('/api/seller',         require('./routes/sellerRoutes'));
-app.use('/api/admin/auth',     require('./routes/adminAuthRoutes'));   // ✅ routes auth admin séparées
+app.use('/api/admin/auth',     require('./routes/adminAuthRoutes'));
 app.use('/api/admin',          require('./routes/adminRoutes'));
 app.use('/api/pricing',        require('./routes/pricingRoutes'));
 app.use('/api/access',         require('./routes/accessRoutes'));
@@ -89,7 +92,7 @@ app.use('/api/admin/pricing',  require('./routes/adminPricingRoutes'));
 app.use('/api/notifications',  require('./routes/notificationRoutes'));
 app.use('/api/invitations',    require('./routes/invitationRoutes'));
 app.use('/api/auth',           require('./routes/sellerAuthRoutes'));
-app.use('/api/agent/auth',     require('./routes/agentAuthRoutes'));   // ✅ rate limit agent inclus
+app.use('/api/agent/auth',     require('./routes/agentAuthRoutes'));
 app.use('/api/payments',       require('./routes/paymentRoutes'));
 app.use('/api/geocoding',      require('./routes/geocodingRoutes'));
 app.use('/api/push',           require('./routes/pushRoutes'));
@@ -126,6 +129,7 @@ db.sequelize.authenticate()
       console.log(`🌍 Env         : ${process.env.NODE_ENV}`);
       console.log(`🛡️  Rate limit  : ACTIF (global + par route)`);
       console.log(`🔐 Admin BDD   : ACTIF (plus de hardcoding)`);
+      console.log(`🍪 Cookies     : ACTIF (refresh token httpOnly)`);
       console.log(`🌐 Origins     : ${allowedOrigins.join(', ')}`);
       console.log(`${'='.repeat(60)}\n`);
     });
