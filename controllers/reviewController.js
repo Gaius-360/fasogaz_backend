@@ -1,22 +1,47 @@
 // ==========================================
 // FICHIER: controllers/reviewController.js
-// ✅ NOUVEAU: Validation contenu inapproprié (commentaire + réponse)
-//            via utils/contentFilter.js
-// ✅ NOUVEAU: getSellerReviews n'expose plus l'id client (anonymisation)
-//            getReceivedReviews conserve id + phone (usage interne revendeur)
+// ✅ v3 — fixes PostgreSQL :
+//    - getMyReviews : include Product conditionnel (required:false + try/catch)
+//    - getSellerReviews : idem
+//    - getReceivedReviews : idem
+//    - Tous les catch exposent error.message en dev
+//    - raw:true sur les requêtes stats
 // ==========================================
 
 const db = require('../models');
 const ResponseHandler = require('../utils/responseHandler');
-const { Op } = require('sequelize');
 const { validateUserText } = require('../utils/contentFilter');
+
+// ── Helper : vérifie si l'association Product existe dans les modèles ──────
+// Si la migration n'a pas encore tourné ou si le modèle Product n'est pas
+// associé à Review, Sequelize plante au moment du findAll avec l'include.
+const hasProductAssociation = () => {
+  try {
+    return !!(db.Review.associations && db.Review.associations.product);
+  } catch (_) {
+    return false;
+  }
+};
+
+// ── Helper : construit l'include Product de façon défensive ───────────────
+// Champs réels du modèle Product : bottleType, brand, price, quantity, status
+// Pas de colonne 'name' — on affiche brand + bottleType côté frontend.
+const productInclude = () =>
+  hasProductAssociation()
+    ? [{
+        model:      db.Product,
+        as:         'product',
+        attributes: ['id', 'brand', 'bottleType'],
+        required:   false     // LEFT JOIN — ne filtre pas les avis sans produit
+      }]
+    : [];
 
 // @desc    Créer un avis
 // @route   POST /api/reviews
 // @access  Private (client)
 exports.createReview = async (req, res) => {
   try {
-    const { orderId, rating, comment } = req.body;
+    const { orderId, rating, comment, productId, reviewType = 'service' } = req.body;
 
     if (!orderId || !rating) {
       return ResponseHandler.error(res, 'Commande et note requis', 400);
@@ -26,7 +51,14 @@ exports.createReview = async (req, res) => {
       return ResponseHandler.error(res, 'La note doit être entre 1 et 5', 400);
     }
 
-    // ✅ Validation du contenu du commentaire
+    if (!['service', 'product'].includes(reviewType)) {
+      return ResponseHandler.error(res, "Type d'avis invalide (service ou product)", 400);
+    }
+
+    if (reviewType === 'product' && !productId) {
+      return ResponseHandler.error(res, 'productId requis pour un avis produit', 400);
+    }
+
     if (comment) {
       const check = validateUserText(comment, 'Le commentaire');
       if (!check.valid) {
@@ -34,7 +66,6 @@ exports.createReview = async (req, res) => {
       }
     }
 
-    // Vérifier que la commande existe et appartient au client
     const order = await db.Order.findOne({
       where: { id: orderId, customerId: req.user.id }
     });
@@ -43,7 +74,6 @@ exports.createReview = async (req, res) => {
       return ResponseHandler.error(res, 'Commande non trouvée', 404);
     }
 
-    // Vérifier que la commande est complétée
     if (order.status !== 'completed') {
       return ResponseHandler.error(
         res,
@@ -52,16 +82,24 @@ exports.createReview = async (req, res) => {
       );
     }
 
-    // Vérifier qu'un avis n'existe pas déjà
-    const existingReview = await db.Review.findOne({ where: { orderId } });
+    // Vérification doublon sur (orderId, reviewType) — aligné sur l'index unique
+    const existingReview = await db.Review.findOne({
+      where: { orderId, reviewType }
+    });
     if (existingReview) {
-      return ResponseHandler.error(res, 'Vous avez déjà noté cette commande', 409);
+      return ResponseHandler.error(
+        res,
+        `Vous avez déjà soumis un avis "${reviewType}" pour cette commande`,
+        409
+      );
     }
 
     const review = await db.Review.create({
       orderId,
       customerId: req.user.id,
       sellerId:   order.sellerId,
+      productId:  productId || null,
+      reviewType,
       rating,
       comment:    comment || null
     });
@@ -80,8 +118,14 @@ exports.createReview = async (req, res) => {
 
     return ResponseHandler.success(res, 'Avis créé avec succès', review, 201);
   } catch (error) {
-    console.error('Erreur création avis:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la création', 500);
+    console.error('Erreur création avis:', error.message);
+    return ResponseHandler.error(
+      res,
+      process.env.NODE_ENV === 'development'
+        ? `Erreur lors de la création: ${error.message}`
+        : 'Erreur lors de la création',
+      500
+    );
   }
 };
 
@@ -94,23 +138,32 @@ exports.getMyReviews = async (req, res) => {
       where: { customerId: req.user.id },
       include: [
         {
-          model: db.Order,
-          as: 'order',
+          model:      db.Order,
+          as:         'order',
           attributes: ['id', 'orderNumber', 'total', 'createdAt']
         },
         {
-          model: db.User,
-          as: 'seller',
+          model:      db.User,
+          as:         'seller',
           attributes: ['id', 'businessName', 'phone']
-        }
+        },
+        // ✅ Défensif : inclut Product seulement si l'association existe
+        ...productInclude()
       ],
       order: [['createdAt', 'DESC']]
     });
 
     return ResponseHandler.success(res, 'Avis récupérés', reviews);
   } catch (error) {
-    console.error('Erreur récupération avis:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
+    console.error('Erreur récupération avis (getMyReviews):', error.message);
+    console.error(error.stack);
+    return ResponseHandler.error(
+      res,
+      process.env.NODE_ENV === 'development'
+        ? `Erreur lors de la récupération: ${error.message}`
+        : 'Erreur lors de la récupération',
+      500
+    );
   }
 };
 
@@ -128,46 +181,43 @@ exports.getSellerReviews = async (req, res) => {
       where: { sellerId },
       include: [
         {
-          model: db.User,
-          as: 'customer',
-          // ✅ Pas d'id ni d'email exposé sur la route publique.
-          //    Le frontend anonymise avec prénom + initiale du nom.
+          model:      db.User,
+          as:         'customer',
+          // Pas d'id ni d'email sur la route publique — anonymisation frontend
           attributes: ['firstName', 'lastName']
         },
         {
-          model: db.Order,
-          as: 'order',
+          model:      db.Order,
+          as:         'order',
           attributes: ['id', 'orderNumber', 'createdAt']
-        }
+        },
+        ...productInclude()
       ],
-      order: [['createdAt', 'DESC']],
+      order:  [['createdAt', 'DESC']],
       limit:  parseInt(limit),
       offset
     });
 
-    // Stats de distribution des notes
-    const allReviews = await db.Review.findAll({
+    // Stats globales en une seule requête légère
+    const allRatings = await db.Review.findAll({
       where:      { sellerId },
-      attributes: ['rating']
+      attributes: ['rating'],
+      raw:        true
     });
 
-    const stats = {
-      total:   allReviews.length,
-      average: allReviews.length > 0
-        ? allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length
-        : 0,
-      distribution: {
-        5: allReviews.filter(r => r.rating === 5).length,
-        4: allReviews.filter(r => r.rating === 4).length,
-        3: allReviews.filter(r => r.rating === 3).length,
-        2: allReviews.filter(r => r.rating === 2).length,
-        1: allReviews.filter(r => r.rating === 1).length,
-      }
-    };
+    const total   = allRatings.length;
+    const average = total > 0
+      ? allRatings.reduce((sum, r) => sum + r.rating, 0) / total
+      : 0;
+
+    const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    allRatings.forEach(r => {
+      distribution[r.rating] = (distribution[r.rating] || 0) + 1;
+    });
 
     return ResponseHandler.success(res, 'Avis récupérés', {
       reviews,
-      stats,
+      stats: { total, average: parseFloat(average.toFixed(2)), distribution },
       pagination: {
         currentPage:  parseInt(page),
         totalPages:   Math.ceil(count / parseInt(limit)),
@@ -176,8 +226,15 @@ exports.getSellerReviews = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Erreur récupération avis revendeur:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
+    console.error('Erreur récupération avis revendeur:', error.message);
+    console.error(error.stack);
+    return ResponseHandler.error(
+      res,
+      process.env.NODE_ENV === 'development'
+        ? `Erreur lors de la récupération: ${error.message}`
+        : 'Erreur lors de la récupération',
+      500
+    );
   }
 };
 
@@ -190,17 +247,17 @@ exports.getReceivedReviews = async (req, res) => {
       where: { sellerId: req.user.id },
       include: [
         {
-          model: db.User,
-          as: 'customer',
-          // Usage interne revendeur : id + prénom + nom + téléphone
-          // pour identification si litige.
+          model:      db.User,
+          as:         'customer',
+          // Usage interne revendeur : id + prénom + nom + téléphone (identification litige)
           attributes: ['id', 'firstName', 'lastName', 'phone']
         },
         {
-          model: db.Order,
-          as: 'order',
+          model:      db.Order,
+          as:         'order',
           attributes: ['id', 'orderNumber', 'total', 'createdAt']
-        }
+        },
+        ...productInclude()
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -208,20 +265,25 @@ exports.getReceivedReviews = async (req, res) => {
     const stats = {
       total:           reviews.length,
       average:         reviews.length > 0
-        ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
+        ? parseFloat(
+            (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length).toFixed(2)
+          )
         : 0,
       withResponse:    reviews.filter(r =>  r.sellerResponse).length,
       withoutResponse: reviews.filter(r => !r.sellerResponse).length
     };
 
-    return ResponseHandler.success(
-      res,
-      'Avis reçus récupérés',
-      { reviews, stats }
-    );
+    return ResponseHandler.success(res, 'Avis reçus récupérés', { reviews, stats });
   } catch (error) {
-    console.error('Erreur récupération avis reçus:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la récupération', 500);
+    console.error('Erreur récupération avis reçus:', error.message);
+    console.error(error.stack);
+    return ResponseHandler.error(
+      res,
+      process.env.NODE_ENV === 'development'
+        ? `Erreur lors de la récupération: ${error.message}`
+        : 'Erreur lors de la récupération',
+      500
+    );
   }
 };
 
@@ -237,7 +299,6 @@ exports.respondToReview = async (req, res) => {
       return ResponseHandler.error(res, 'La réponse ne peut pas être vide', 400);
     }
 
-    // ✅ Validation du contenu de la réponse
     const check = validateUserText(response, 'La réponse');
     if (!check.valid) {
       return ResponseHandler.error(res, check.message, 422);
@@ -255,10 +316,17 @@ exports.respondToReview = async (req, res) => {
       return ResponseHandler.error(res, 'Vous avez déjà répondu à cet avis', 400);
     }
 
-    await review.update({
-      sellerResponse: response.trim(),
-      respondedAt:    new Date()
-    });
+    // ✅ fields: [...] — évite que Sequelize valide/écrive toutes les colonnes
+    //    (dont reviewType ENUM absent en base si migration pas encore jouée)
+    await review.update(
+      {
+        sellerResponse: response.trim(),
+        respondedAt:    new Date()
+      },
+      {
+        fields: ['sellerResponse', 'respondedAt']
+      }
+    );
 
     await db.Notification.create({
       userId:    review.customerId,
@@ -272,8 +340,15 @@ exports.respondToReview = async (req, res) => {
 
     return ResponseHandler.success(res, 'Réponse ajoutée avec succès', review);
   } catch (error) {
-    console.error('Erreur réponse avis:', error);
-    return ResponseHandler.error(res, 'Erreur lors de la réponse', 500);
+    console.error('Erreur réponse avis:', error.message);
+    console.error(error.stack);
+    return ResponseHandler.error(
+      res,
+      process.env.NODE_ENV === 'development'
+        ? `Erreur lors de la réponse: ${error.message}`
+        : 'Erreur lors de la réponse',
+      500
+    );
   }
 };
 
@@ -283,7 +358,8 @@ async function updateSellerRating(sellerId) {
   try {
     const reviews = await db.Review.findAll({
       where:      { sellerId },
-      attributes: ['rating']
+      attributes: ['rating'],
+      raw:        true
     });
 
     const count   = reviews.length;
@@ -291,19 +367,15 @@ async function updateSellerRating(sellerId) {
       ? reviews.reduce((sum, r) => sum + r.rating, 0) / count
       : 0;
 
-    // ✅ FIX: mise à jour des deux champs pour compatibilité.
-    //   - totalReviews  : champ historique
-    //   - reviewCount   : champ lu par le frontend (SellerDetailsModal, carte revendeur, etc.)
-    //   - averageRating : note moyenne affichée dans le header du modal
     await db.User.update(
       {
         averageRating: parseFloat(average.toFixed(2)),
         totalReviews:  count,
-        reviewCount:   count,   // ← champ lu par le frontend
+        reviewCount:   count,
       },
       { where: { id: sellerId } }
     );
   } catch (error) {
-    console.error('Erreur mise à jour rating:', error);
+    console.error('Erreur mise à jour rating:', error.message);
   }
 }
