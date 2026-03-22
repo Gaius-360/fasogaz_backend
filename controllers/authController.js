@@ -4,12 +4,10 @@
 //    - OTP jamais retourné dans les réponses API
 //    - Messages génériques anti-énumération
 //    - Validation GPS clients conservée
-//    - ✅ FIX: 'preparing' retiré de l'enum orders_status
-//    - ✅ NOUVEAU: refreshToken + logout pour connexion persistante PWA
-//    - ✅ FIX CROSS-DOMAIN: sameSite 'None' obligatoire en production
-//      car frontend (app.fasogaz.com) et backend (api.fasogaz.com)
-//      sont sur des domaines différents — 'Strict' et 'Lax' bloquent
-//      l'envoi du cookie dans ce cas
+//    - FIX: 'preparing' retiré de l'enum orders_status
+//    - PERSISTANCE: refreshToken retourné dans le JSON (pas de cookie)
+//      → fiable en cross-domain (fasogaz.onrender.com / fasogaz-backend.onrender.com)
+//      → le client le stocke en localStorage et l'envoie dans le body
 // ==========================================
 
 const bcrypt = require('bcryptjs');
@@ -20,37 +18,13 @@ const sendSMS         = require('../utils/sendSMS');
 const generateOTP     = require('../utils/generateOTP');
 const { validateLocationForCity } = require('../utils/locationValidator');
 
-// ✅ Statuts de commandes actives — synchronisés avec l'enum PostgreSQL
 const ACTIVE_ORDER_STATUSES = ['pending', 'accepted', 'in_delivery'];
 
 // ==========================================
-// HELPERS COOKIES
+// HELPERS TOKENS
 // ==========================================
 
-/**
- * Options du cookie refresh_token.
- * httpOnly  → inaccessible au JS → protégé XSS
- * secure    → HTTPS uniquement (obligatoire avec sameSite: None)
- * sameSite  → 'None' OBLIGATOIRE en cross-domain (app.* ↔ api.*)
- *             'Strict' et 'Lax' bloquent le cookie quand frontend et
- *             backend sont sur des sous-domaines différents
- * maxAge    → 90 jours
- *
- * ⚠️  sameSite: 'None' exige secure: true — les deux vont ensemble.
- *     En développement local (même domaine/port) on repasse en 'Lax'
- *     car localhost n'est pas HTTPS.
- */
-const REFRESH_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure:   process.env.NODE_ENV === 'production', // HTTPS requis en prod (et par None)
-  sameSite: process.env.NODE_ENV === 'production'
-    ? 'None'  // ✅ Cross-domain prod : app.fasogaz.com ↔ api.fasogaz.com
-    : 'Lax',  // ✅ Développement local : localhost (même origine)
-  maxAge: 90 * 24 * 60 * 60 * 1000, // 90 jours en ms
-  path:   '/',
-};
-
-/** Génère un refresh token JWT signé avec JWT_REFRESH_SECRET */
+/** Refresh token JWT — 90 jours — signé avec JWT_REFRESH_SECRET */
 const generateRefreshToken = (userId) =>
   jwt.sign(
     { id: userId },
@@ -58,7 +32,7 @@ const generateRefreshToken = (userId) =>
     { expiresIn: '90d' }
   );
 
-/** Génère un access token JWT court (15 min) */
+/** Access token JWT — 15 min — signé avec JWT_SECRET */
 const generateAccessToken = (user) =>
   jwt.sign(
     { id: user.id, phone: user.phone, role: user.role },
@@ -91,9 +65,7 @@ exports.register = async (req, res) => {
     // Validation GPS pour les clients uniquement
     if (role === 'client') {
       if (!locationVerified || latitude === undefined || longitude === undefined) {
-        return ResponseHandler.error(
-          res, 'La vérification de votre position GPS est requise.', 400
-        );
+        return ResponseHandler.error(res, 'La vérification de votre position GPS est requise.', 400);
       }
       if (!city) {
         return ResponseHandler.error(res, 'La ville est requise', 400);
@@ -168,22 +140,24 @@ exports.register = async (req, res) => {
       }
     }
 
-    // ✅ Access token court + refresh token en cookie httpOnly
-    const accessToken   = generateAccessToken(user);
-    const refreshToken_ = generateRefreshToken(user.id);
+    const accessToken  = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user.id);
 
-    res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
-
+    // ✅ Les deux tokens retournés dans le JSON — pas de cookie
     return ResponseHandler.success(
       res, 'Inscription réussie. Bienvenue !',
       {
-        token: accessToken,
+        token:        accessToken,
+        refreshToken: refreshToken,
         user: {
-          id: user.id, phone: user.phone,
-          firstName: user.firstName, lastName: user.lastName,
-          role: user.role, city: user.city,
-          businessName: user.businessName || null,
-          isVerified: true,
+          id:               user.id,
+          phone:            user.phone,
+          firstName:        user.firstName,
+          lastName:         user.lastName,
+          role:             user.role,
+          city:             user.city,
+          businessName:     user.businessName || null,
+          isVerified:       true,
           validationStatus: user.validationStatus || null
         }
       },
@@ -222,20 +196,19 @@ exports.login = async (req, res) => {
       return ResponseHandler.error(res, 'Compte désactivé. Contactez le support.', 403);
     }
 
-    // ✅ Access token court (15 min) + refresh token httpOnly (90 jours)
-    const accessToken   = generateAccessToken(user);
-    const refreshToken_ = generateRefreshToken(user.id);
+    const accessToken  = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user.id);
 
-    res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
-
-    // ✅ OTP et otpExpiry toujours exclus de la réponse
+    // OTP et otpExpiry toujours exclus de la réponse
     const userResponse = await db.User.findByPk(user.id, {
       attributes: { exclude: ['password', 'otp', 'otpExpiry'] }
     });
 
+    // ✅ Les deux tokens retournés dans le JSON — pas de cookie
     return ResponseHandler.success(res, 'Connexion réussie', {
-      token: accessToken,
-      user:  userResponse
+      token:        accessToken,
+      refreshToken: refreshToken,
+      user:         userResponse
     });
 
   } catch (error) {
@@ -245,58 +218,54 @@ exports.login = async (req, res) => {
 };
 
 // ==========================================
-// REFRESH TOKEN (silencieux, appelé par l'intercepteur)
+// REFRESH TOKEN
 // @route   POST /api/auth/refresh
-// @access  Public (cookie httpOnly requis)
+// @access  Public
+// ✅ Reçoit le refresh token dans req.body.refreshToken
+//    (plus de cookie — fonctionne en cross-domain sans configuration CORS spéciale)
 // ==========================================
 exports.refreshToken = async (req, res) => {
   try {
-    const token = req.cookies?.refresh_token;
+    const token = req.body?.refreshToken;
 
     if (!token) {
       return ResponseHandler.error(res, 'Refresh token manquant', 401);
     }
 
-    // Vérifier la signature et l'expiration
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
     } catch (jwtError) {
-      res.clearCookie('refresh_token', { path: '/' });
       return ResponseHandler.error(res, 'Session expirée, veuillez vous reconnecter', 401);
     }
 
-    // Vérifier que l'utilisateur existe et est actif
     const user = await db.User.findByPk(decoded.id, {
       attributes: { exclude: ['password', 'otp', 'otpExpiry'] }
     });
 
     if (!user) {
-      res.clearCookie('refresh_token', { path: '/' });
       return ResponseHandler.error(res, 'Utilisateur non trouvé', 401);
     }
 
     if (!user.isActive) {
-      res.clearCookie('refresh_token', { path: '/' });
       return ResponseHandler.error(res, 'Compte désactivé. Contactez le support.', 403);
     }
 
-    // Émettre un nouvel access token + rotation du refresh token
+    // Nouveaux tokens — rotation du refresh token
     const newAccessToken  = generateAccessToken(user);
     const newRefreshToken = generateRefreshToken(user.id);
 
-    res.cookie('refresh_token', newRefreshToken, REFRESH_COOKIE_OPTIONS);
-
     console.log(`✅ Token rafraîchi pour l'utilisateur ${user.id} (${user.role})`);
 
+    // ✅ Les deux tokens retournés dans le JSON
     return ResponseHandler.success(res, 'Token renouvelé', {
-      token: newAccessToken,
+      token:        newAccessToken,
+      refreshToken: newRefreshToken,
       user,
     });
 
   } catch (error) {
     console.error('❌ Erreur refresh token:', error);
-    res.clearCookie('refresh_token', { path: '/' });
     return ResponseHandler.error(res, 'Erreur lors du renouvellement', 500);
   }
 };
@@ -307,7 +276,7 @@ exports.refreshToken = async (req, res) => {
 // @access  Public
 // ==========================================
 exports.logout = (req, res) => {
-  res.clearCookie('refresh_token', { path: '/' });
+  // Pas de cookie à effacer — le client supprime ses tokens du localStorage
   return ResponseHandler.success(res, 'Déconnexion réussie');
 };
 
@@ -326,25 +295,28 @@ exports.verifyOTP = async (req, res) => {
 
     const user = await db.User.findOne({ where: { phone } });
 
+    // Message générique — ne pas distinguer "compte inexistant" de "OTP incorrect"
     if (!user || user.otp !== otp || new Date() > user.otpExpiry) {
       return ResponseHandler.error(res, 'Code OTP invalide ou expiré', 400);
     }
 
     await user.update({ otp: null, otpExpiry: null });
 
-    const accessToken   = generateAccessToken(user);
-    const refreshToken_ = generateRefreshToken(user.id);
-
-    res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
+    const accessToken  = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user.id);
 
     return ResponseHandler.success(res, 'Code vérifié avec succès', {
-      token: accessToken,
+      token:        accessToken,
+      refreshToken: refreshToken,
       user: {
-        id: user.id, phone: user.phone,
-        firstName: user.firstName, lastName: user.lastName,
-        role: user.role, city: user.city,
-        businessName: user.businessName,
-        isVerified: user.isVerified,
+        id:               user.id,
+        phone:            user.phone,
+        firstName:        user.firstName,
+        lastName:         user.lastName,
+        role:             user.role,
+        city:             user.city,
+        businessName:     user.businessName,
+        isVerified:       user.isVerified,
         validationStatus: user.validationStatus
       }
     });
@@ -371,7 +343,7 @@ exports.resendOTP = async (req, res) => {
     const user = await db.User.findOne({ where: { phone } });
 
     if (user) {
-      const otp = generateOTP();
+      const otp       = generateOTP();
       const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
       await user.update({ otp, otpExpiry });
 
@@ -382,6 +354,7 @@ exports.resendOTP = async (req, res) => {
       }
     }
 
+    // Réponse identique que l'utilisateur existe ou non
     return ResponseHandler.success(
       res, 'Si ce numéro est enregistré, un code vous a été envoyé par SMS.'
     );
@@ -408,7 +381,7 @@ exports.forgotPassword = async (req, res) => {
     const user = await db.User.findOne({ where: { phone } });
 
     if (user) {
-      const otp = generateOTP();
+      const otp       = generateOTP();
       const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
       await user.update({ otp, otpExpiry });
 
@@ -422,6 +395,7 @@ exports.forgotPassword = async (req, res) => {
       }
     }
 
+    // Réponse générique — ne confirme pas l'existence du compte
     return ResponseHandler.success(
       res, 'Si ce numéro est enregistré, un code de réinitialisation vous a été envoyé par SMS.'
     );
@@ -452,8 +426,6 @@ exports.resetPassword = async (req, res) => {
     }
 
     await user.update({ password: newPassword, otp: null, otpExpiry: null });
-
-    res.clearCookie('refresh_token', { path: '/' });
 
     return ResponseHandler.success(res, 'Mot de passe réinitialisé avec succès');
 
@@ -512,12 +484,14 @@ exports.updateProfile = async (req, res) => {
 
       if (latitude !== undefined && latitude !== null) {
         const lat = parseFloat(latitude);
-        if (isNaN(lat) || lat < -90  || lat > 90)  return ResponseHandler.error(res, 'Latitude invalide', 400);
+        if (isNaN(lat) || lat < -90  || lat > 90)
+          return ResponseHandler.error(res, 'Latitude invalide', 400);
         updates.latitude = lat;
       }
       if (longitude !== undefined && longitude !== null) {
         const lon = parseFloat(longitude);
-        if (isNaN(lon) || lon < -180 || lon > 180) return ResponseHandler.error(res, 'Longitude invalide', 400);
+        if (isNaN(lon) || lon < -180 || lon > 180)
+          return ResponseHandler.error(res, 'Longitude invalide', 400);
         updates.longitude = lon;
       }
 
@@ -558,7 +532,7 @@ exports.changePassword = async (req, res) => {
       return ResponseHandler.error(res, 'Mot de passe actuel et nouveau requis', 400);
     }
 
-    const user = await db.User.findByPk(req.user.id);
+    const user    = await db.User.findByPk(req.user.id);
     const isValid = await user.comparePassword(currentPassword);
 
     if (!isValid) {
@@ -566,9 +540,6 @@ exports.changePassword = async (req, res) => {
     }
 
     await user.update({ password: newPassword });
-
-    const newRefreshToken = generateRefreshToken(user.id);
-    res.cookie('refresh_token', newRefreshToken, REFRESH_COOKIE_OPTIONS);
 
     return ResponseHandler.success(res, 'Mot de passe modifié avec succès');
 
@@ -586,9 +557,12 @@ exports.changePassword = async (req, res) => {
 exports.updateDeliverySettings = async (req, res) => {
   try {
     const user = await db.User.findByPk(req.user.id);
-    if (!user)                                return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
-    if (user.role !== 'revendeur')            return ResponseHandler.error(res, 'Réservé aux revendeurs', 403);
-    if (user.validationStatus !== 'approved') return ResponseHandler.error(res, 'Compte non approuvé', 403);
+    if (!user)
+      return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
+    if (user.role !== 'revendeur')
+      return ResponseHandler.error(res, 'Réservé aux revendeurs', 403);
+    if (user.validationStatus !== 'approved')
+      return ResponseHandler.error(res, 'Compte non approuvé', 403);
 
     const { deliveryAvailable, deliveryRadius, deliveryFee } = req.body;
     const updates = {};
@@ -622,7 +596,7 @@ exports.deleteAccount = async (req, res) => {
     if (!password) return ResponseHandler.error(res, 'Le mot de passe est requis', 400);
 
     transaction = await db.sequelize.transaction();
-    const user = await db.User.findByPk(req.user.id);
+    const user  = await db.User.findByPk(req.user.id);
 
     if (!user) {
       await transaction.rollback();
@@ -661,8 +635,6 @@ exports.deleteAccount = async (req, res) => {
     await user.destroy({ transaction });
     await transaction.commit();
 
-    res.clearCookie('refresh_token', { path: '/' });
-
     return ResponseHandler.success(res, 'Votre compte a été supprimé avec succès');
 
   } catch (error) {
@@ -693,7 +665,7 @@ exports.requestAccountDeletion = async (req, res) => {
     deletionDate.setDate(deletionDate.getDate() + 30);
 
     await user.update({
-      isActive: false,
+      isActive:              false,
       deletionRequestedAt:   new Date(),
       scheduledDeletionDate: deletionDate,
       deletionReason:        reason || null
