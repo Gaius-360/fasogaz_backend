@@ -2,12 +2,14 @@
 // FICHIER: server.js
 // ✅ VERSION FINALE — Rate limiting global actif
 // ✅ AJOUT: cookie-parser pour les refresh tokens httpOnly
+// ✅ FIX CROSS-DOMAIN: CORS configuré pour envoyer les cookies
+//    entre app.fasogaz.com (frontend) et api.fasogaz.com (backend)
 // ==========================================
 
 const express      = require('express');
 const dotenv       = require('dotenv');
 const cors         = require('cors');
-const cookieParser = require('cookie-parser'); // ✅ NOUVEAU
+const cookieParser = require('cookie-parser');
 const db           = require('./models');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -23,28 +25,49 @@ const app = express();
 
 // ==========================================
 // CORS
+// ✅ FIX CROSS-DOMAIN: credentials: true + origins explicites (jamais *)
+//
+// Règle du navigateur :
+//   withCredentials: true (côté client)  +  credentials: true (côté serveur)
+//   + origin EXACTE (pas de wildcard *)  =  cookie envoyé
+//
+// Si l'une de ces 3 conditions manque → le cookie est silencieusement bloqué
+// et POST /auth/refresh arrive sans cookie → 401 → déconnexion
 // ==========================================
 const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:4173',
+  'http://localhost:5173',   // Vite dev
+  'http://localhost:4173',   // Vite preview
   'https://fasogaz.onrender.com',
-  process.env.FRONTEND_URL,
-].filter(Boolean);
+  process.env.FRONTEND_URL,  // ex: https://app.fasogaz.com  ← doit être dans le .env
+].filter(Boolean);           // retire les undefined si FRONTEND_URL n'est pas défini
 
 app.use(cors({
   origin: (origin, callback) => {
+    // Autoriser les requêtes sans origin (Postman, curl, apps mobiles natives)
     if (!origin) return callback(null, true);
+
     if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // En dev, logger l'origine bloquée pour faciliter le debug
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`⚠️  CORS bloqué pour l'origine: ${origin}`);
+      console.warn(`    Origines autorisées: ${allowedOrigins.join(', ')}`);
+    }
+
     callback(new Error(`CORS bloqué pour l'origine: ${origin}`));
   },
-  credentials: true, // ✅ OBLIGATOIRE pour que les cookies soient transmis cross-origin
+  credentials: true, // ✅ OBLIGATOIRE — sans ça le cookie n'est pas transmis
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+// ✅ Répondre explicitement aux preflight OPTIONS
+// Certains proxys ou CDN bloquent les OPTIONS sans ce handler
+app.options('*', cors());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser()); // ✅ NOUVEAU — doit être AVANT les routes
+app.use(cookieParser()); // ✅ Doit être AVANT les routes pour parser req.cookies
 
 // ✅ Rate limit global sur toutes les routes /api (100 req / 15 min)
 app.use('/api', globalApiLimiter);
@@ -129,7 +152,7 @@ db.sequelize.authenticate()
       console.log(`🌍 Env         : ${process.env.NODE_ENV}`);
       console.log(`🛡️  Rate limit  : ACTIF (global + par route)`);
       console.log(`🔐 Admin BDD   : ACTIF (plus de hardcoding)`);
-      console.log(`🍪 Cookies     : ACTIF (refresh token httpOnly)`);
+      console.log(`🍪 Cookies     : ACTIF (sameSite=None, cross-domain)`);
       console.log(`🌐 Origins     : ${allowedOrigins.join(', ')}`);
       console.log(`${'='.repeat(60)}\n`);
     });

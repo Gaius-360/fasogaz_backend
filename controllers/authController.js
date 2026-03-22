@@ -6,6 +6,10 @@
 //    - Validation GPS clients conservée
 //    - ✅ FIX: 'preparing' retiré de l'enum orders_status
 //    - ✅ NOUVEAU: refreshToken + logout pour connexion persistante PWA
+//    - ✅ FIX CROSS-DOMAIN: sameSite 'None' obligatoire en production
+//      car frontend (app.fasogaz.com) et backend (api.fasogaz.com)
+//      sont sur des domaines différents — 'Strict' et 'Lax' bloquent
+//      l'envoi du cookie dans ce cas
 // ==========================================
 
 const bcrypt = require('bcryptjs');
@@ -26,16 +30,24 @@ const ACTIVE_ORDER_STATUSES = ['pending', 'accepted', 'in_delivery'];
 /**
  * Options du cookie refresh_token.
  * httpOnly  → inaccessible au JS → protégé XSS
- * secure    → HTTPS uniquement en production
- * sameSite  → protégé CSRF
+ * secure    → HTTPS uniquement (obligatoire avec sameSite: None)
+ * sameSite  → 'None' OBLIGATOIRE en cross-domain (app.* ↔ api.*)
+ *             'Strict' et 'Lax' bloquent le cookie quand frontend et
+ *             backend sont sur des sous-domaines différents
  * maxAge    → 90 jours
+ *
+ * ⚠️  sameSite: 'None' exige secure: true — les deux vont ensemble.
+ *     En développement local (même domaine/port) on repasse en 'Lax'
+ *     car localhost n'est pas HTTPS.
  */
 const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure:   process.env.NODE_ENV === 'production',
-  sameSite: process.env.NODE_ENV === 'production' ? 'Strict' : 'Lax',
-  maxAge:   90 * 24 * 60 * 60 * 1000, // 90 jours en ms
-  path:     '/',
+  secure:   process.env.NODE_ENV === 'production', // HTTPS requis en prod (et par None)
+  sameSite: process.env.NODE_ENV === 'production'
+    ? 'None'  // ✅ Cross-domain prod : app.fasogaz.com ↔ api.fasogaz.com
+    : 'Lax',  // ✅ Développement local : localhost (même origine)
+  maxAge: 90 * 24 * 60 * 60 * 1000, // 90 jours en ms
+  path:   '/',
 };
 
 /** Génère un refresh token JWT signé avec JWT_REFRESH_SECRET */
@@ -98,8 +110,8 @@ exports.register = async (req, res) => {
     };
 
     if (role === 'revendeur') {
-      userData.businessName    = businessName || null;
-      userData.businessAddress = businessAddress || null;
+      userData.businessName     = businessName || null;
+      userData.businessAddress  = businessAddress || null;
       userData.validationStatus = 'approved';
 
       if (token) {
@@ -156,7 +168,7 @@ exports.register = async (req, res) => {
       }
     }
 
-    // ✅ Access token court + refresh token en cookie
+    // ✅ Access token court + refresh token en cookie httpOnly
     const accessToken   = generateAccessToken(user);
     const refreshToken_ = generateRefreshToken(user.id);
 
@@ -214,7 +226,6 @@ exports.login = async (req, res) => {
     const accessToken   = generateAccessToken(user);
     const refreshToken_ = generateRefreshToken(user.id);
 
-    // Pose le cookie refresh_token — inaccessible au JS, protégé XSS
     res.cookie('refresh_token', refreshToken_, REFRESH_COOKIE_OPTIONS);
 
     // ✅ OTP et otpExpiry toujours exclus de la réponse
@@ -251,7 +262,6 @@ exports.refreshToken = async (req, res) => {
     try {
       decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
     } catch (jwtError) {
-      // Token invalide ou expiré → nettoyer le cookie et forcer reconnexion
       res.clearCookie('refresh_token', { path: '/' });
       return ResponseHandler.error(res, 'Session expirée, veuillez vous reconnecter', 401);
     }
@@ -271,12 +281,10 @@ exports.refreshToken = async (req, res) => {
       return ResponseHandler.error(res, 'Compte désactivé. Contactez le support.', 403);
     }
 
-    // Émettre un nouvel access token
-    const newAccessToken = generateAccessToken(user);
-
-    // Rotation du refresh token : émettre un nouveau cookie
-    // (stratégie optionnelle mais recommandée pour plus de sécurité)
+    // Émettre un nouvel access token + rotation du refresh token
+    const newAccessToken  = generateAccessToken(user);
     const newRefreshToken = generateRefreshToken(user.id);
+
     res.cookie('refresh_token', newRefreshToken, REFRESH_COOKIE_OPTIONS);
 
     console.log(`✅ Token rafraîchi pour l'utilisateur ${user.id} (${user.role})`);
@@ -299,13 +307,12 @@ exports.refreshToken = async (req, res) => {
 // @access  Public
 // ==========================================
 exports.logout = (req, res) => {
-  // Efface le cookie côté serveur — le client doit effacer son localStorage
   res.clearCookie('refresh_token', { path: '/' });
   return ResponseHandler.success(res, 'Déconnexion réussie');
 };
 
 // ==========================================
-// VÉRIFICATION OTP (mot de passe oublié uniquement)
+// VÉRIFICATION OTP
 // @route   POST /api/auth/verify-otp
 // @access  Public
 // ==========================================
@@ -319,7 +326,6 @@ exports.verifyOTP = async (req, res) => {
 
     const user = await db.User.findOne({ where: { phone } });
 
-    // ✅ Message générique — ne pas distinguer "compte inexistant" de "OTP incorrect"
     if (!user || user.otp !== otp || new Date() > user.otpExpiry) {
       return ResponseHandler.error(res, 'Code OTP invalide ou expiré', 400);
     }
@@ -340,7 +346,6 @@ exports.verifyOTP = async (req, res) => {
         businessName: user.businessName,
         isVerified: user.isVerified,
         validationStatus: user.validationStatus
-        // ✅ Pas d'OTP dans la réponse
       }
     });
 
@@ -365,7 +370,6 @@ exports.resendOTP = async (req, res) => {
 
     const user = await db.User.findOne({ where: { phone } });
 
-    // ✅ Message générique même si l'utilisateur n'existe pas
     if (user) {
       const otp = generateOTP();
       const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
@@ -378,7 +382,6 @@ exports.resendOTP = async (req, res) => {
       }
     }
 
-    // ✅ Réponse identique que l'utilisateur existe ou non
     return ResponseHandler.success(
       res, 'Si ce numéro est enregistré, un code vous a été envoyé par SMS.'
     );
@@ -419,7 +422,6 @@ exports.forgotPassword = async (req, res) => {
       }
     }
 
-    // ✅ Réponse générique — ne confirme pas l'existence du compte
     return ResponseHandler.success(
       res, 'Si ce numéro est enregistré, un code de réinitialisation vous a été envoyé par SMS.'
     );
@@ -451,7 +453,6 @@ exports.resetPassword = async (req, res) => {
 
     await user.update({ password: newPassword, otp: null, otpExpiry: null });
 
-    // Invalider toutes les sessions existantes en révoquant le refresh token
     res.clearCookie('refresh_token', { path: '/' });
 
     return ResponseHandler.success(res, 'Mot de passe réinitialisé avec succès');
@@ -566,8 +567,6 @@ exports.changePassword = async (req, res) => {
 
     await user.update({ password: newPassword });
 
-    // ✅ Rotation du refresh token après changement de mot de passe
-    // (invalide les sessions sur les autres appareils)
     const newRefreshToken = generateRefreshToken(user.id);
     res.cookie('refresh_token', newRefreshToken, REFRESH_COOKIE_OPTIONS);
 
@@ -587,8 +586,8 @@ exports.changePassword = async (req, res) => {
 exports.updateDeliverySettings = async (req, res) => {
   try {
     const user = await db.User.findByPk(req.user.id);
-    if (!user)                              return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
-    if (user.role !== 'revendeur')          return ResponseHandler.error(res, 'Réservé aux revendeurs', 403);
+    if (!user)                                return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
+    if (user.role !== 'revendeur')            return ResponseHandler.error(res, 'Réservé aux revendeurs', 403);
     if (user.validationStatus !== 'approved') return ResponseHandler.error(res, 'Compte non approuvé', 403);
 
     const { deliveryAvailable, deliveryRadius, deliveryFee } = req.body;
@@ -636,7 +635,6 @@ exports.deleteAccount = async (req, res) => {
     }
 
     if (user.role === 'revendeur') {
-      // ✅ FIX: 'preparing' retiré — n'existe pas dans enum_orders_status
       const pendingCount = await db.Order.count({
         where: { sellerId: user.id, status: ACTIVE_ORDER_STATUSES }
       });
@@ -648,7 +646,6 @@ exports.deleteAccount = async (req, res) => {
     }
 
     if (user.role === 'client') {
-      // ✅ FIX: 'preparing' retiré — n'existe pas dans enum_orders_status
       const pendingCount = await db.Order.count({
         where: { customerId: user.id, status: ACTIVE_ORDER_STATUSES }
       });
@@ -664,7 +661,6 @@ exports.deleteAccount = async (req, res) => {
     await user.destroy({ transaction });
     await transaction.commit();
 
-    // Effacer le cookie après suppression du compte
     res.clearCookie('refresh_token', { path: '/' });
 
     return ResponseHandler.success(res, 'Votre compte a été supprimé avec succès');
@@ -698,9 +694,9 @@ exports.requestAccountDeletion = async (req, res) => {
 
     await user.update({
       isActive: false,
-      deletionRequestedAt: new Date(),
+      deletionRequestedAt:   new Date(),
       scheduledDeletionDate: deletionDate,
-      deletionReason: reason || null
+      deletionReason:        reason || null
     });
 
     return ResponseHandler.success(
@@ -724,10 +720,10 @@ exports.cancelAccountDeletion = async (req, res) => {
     if (!user.deletionRequestedAt) return ResponseHandler.error(res, 'Aucune demande en cours', 400);
 
     await user.update({
-      isActive: true,
-      deletionRequestedAt: null,
+      isActive:              true,
+      deletionRequestedAt:   null,
       scheduledDeletionDate: null,
-      deletionReason: null
+      deletionReason:        null
     });
 
     return ResponseHandler.success(res, 'La suppression a été annulée avec succès');
