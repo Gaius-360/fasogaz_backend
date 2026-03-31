@@ -4,6 +4,8 @@
 // ✅ AJOUT: cookie-parser pour les refresh tokens httpOnly
 // ✅ FIX CROSS-DOMAIN: CORS configuré pour envoyer les cookies
 //    entre app.fasogaz.com (frontend) et api.fasogaz.com (backend)
+// ✅ FIX SIMULATION: localhost:5000 ajouté aux origines autorisées
+//    (la page de simulation est servie par le backend lui-même)
 // ==========================================
 
 const express      = require('express');
@@ -35,15 +37,19 @@ const app = express();
 // et POST /auth/refresh arrive sans cookie → 401 → déconnexion
 // ==========================================
 const allowedOrigins = [
-  'http://localhost:5173',   // Vite dev
+  'http://localhost:5173',   // Vite dev frontend
   'http://localhost:4173',   // Vite preview
+  'http://localhost:5000',   // ✅ Backend lui-même (pages simulation LigdiCash)
+  'http://localhost:3000',   // React dev alternatif
   'https://fasogaz.onrender.com',
   process.env.FRONTEND_URL,  // ex: https://app.fasogaz.com  ← doit être dans le .env
-].filter(Boolean);           // retire les undefined si FRONTEND_URL n'est pas défini
+  process.env.BACKEND_URL,   // ✅ URL backend production (pages simulation en prod)
+].filter(Boolean);           // retire les undefined si variables non définies
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Autoriser les requêtes sans origin (Postman, curl, apps mobiles natives)
+    // Autoriser les requêtes sans origin (Postman, curl, apps mobiles natives,
+    // et les appels serveur→serveur internes comme le webhook callback)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) return callback(null, true);

@@ -1,8 +1,8 @@
 // ==========================================
 // FICHIER: controllers/paymentController.js
 // ✅ Types acceptés :
-//    'subscription'        → abonnement revendeur
-//    'client_subscription' → abonnement client (accès tous les revendeurs)
+//    'subscription'        → abonnement revendeur  (txType: 'seller_subscription')
+//    'client_subscription' → abonnement client     (txType: 'client_access')
 // ✅ AJOUT: notifyPaymentConfirmed après activation de chaque abonnement
 // ==========================================
 
@@ -59,7 +59,8 @@ exports.initiatePayment = async (req, res) => {
       return ResponseHandler.error(res, 'Erreur création paiement LigdiCash', 500);
     }
 
-    const txType = type === 'client_subscription' ? 'client_subscription' : 'seller_subscription';
+    // ✅ FIX: mapper 'client_subscription' → 'client_access' (valeur valide dans l'enum)
+    const txType = type === 'client_subscription' ? 'client_access' : 'seller_subscription';
 
     const transaction = await Transaction.create({
       userId,
@@ -169,17 +170,21 @@ exports.handleReturn = async (req, res) => {
 /**
  * @desc    Vérifier le statut d'une transaction
  * @route   GET /api/payments/status/:transactionNumber
- * @access  Private
+ * @access  Public (pas de données personnelles retournées)
+ *
+ * ✅ FIX: route rendue publique pour éviter le 401 → /login au retour
+ *    de la page LigdiCash/simulation quand le JWT a expiré pendant
+ *    la redirection. Seuls status, amount et completedAt sont exposés.
  */
 exports.checkStatus = async (req, res) => {
   try {
     const { transactionNumber } = req.params;
-    const userId = req.user.id;
 
-    const transaction = await Transaction.findOne({ where: { transactionNumber, userId } });
+    // Recherche par transactionNumber uniquement (plus de filtre userId)
+    const transaction = await Transaction.findOne({ where: { transactionNumber } });
     if (!transaction) return ResponseHandler.error(res, 'Transaction non trouvée', 404);
 
-    // Si encore pending, interroger LigdiCash
+    // Si encore pending, interroger LigdiCash pour mettre à jour
     if (transaction.status === 'pending' && transaction.ligdicashToken) {
       const paymentStatus = await ligdicashService.checkPaymentStatus(transaction.ligdicashToken);
       if (paymentStatus.status === 'completed' || paymentStatus.status === 'success') {
@@ -190,6 +195,7 @@ exports.checkStatus = async (req, res) => {
     // Recharger après mise à jour éventuelle
     await transaction.reload();
 
+    // ✅ Ne retourner que les champs non sensibles
     return ResponseHandler.success(res, 'Statut récupéré', {
       status:      transaction.status,
       amount:      transaction.amount,
@@ -213,9 +219,10 @@ async function _processSuccessfulPayment(transaction) {
 
   const metadata = { ...transaction.metadata, amount: transaction.amount };
 
+  // ✅ FIX: 'client_access' est le txType stocké pour les abonnements client
   if (transaction.type === 'seller_subscription') {
     await _activateSellerSubscription(transaction.userId, metadata, transaction.transactionNumber);
-  } else if (transaction.type === 'client_subscription') {
+  } else if (transaction.type === 'client_access') {
     await _activateClientSubscription(transaction.userId, metadata, transaction.transactionNumber);
   }
 
@@ -224,7 +231,6 @@ async function _processSuccessfulPayment(transaction) {
 
 /**
  * Activer un abonnement revendeur
- * ✅ AJOUT: notifyPaymentConfirmed après activation
  */
 async function _activateSellerSubscription(userId, metadata, transactionNumber) {
   const pricingConfig = await Pricing.findOne({ where: { targetRole: 'revendeur' } });
@@ -255,7 +261,6 @@ async function _activateSellerSubscription(userId, metadata, transactionNumber) 
     { where: { id: userId } }
   );
 
-  // ✅ Notification push + BDD au revendeur
   await NotificationService.notifyPaymentConfirmed(userId, {
     amount:            metadata.amount,
     transactionNumber,
@@ -270,7 +275,6 @@ async function _activateSellerSubscription(userId, metadata, transactionNumber) 
 
 /**
  * Activer un abonnement client (accès à tous les revendeurs)
- * ✅ AJOUT: notifyPaymentConfirmed après activation
  */
 async function _activateClientSubscription(userId, metadata, transactionNumber) {
   const pricingConfig = await Pricing.findOne({ where: { targetRole: 'client' } });
@@ -301,7 +305,6 @@ async function _activateClientSubscription(userId, metadata, transactionNumber) 
     { where: { id: userId } }
   );
 
-  // ✅ Notification push + BDD au client
   await NotificationService.notifyPaymentConfirmed(userId, {
     amount:            metadata.amount,
     transactionNumber,

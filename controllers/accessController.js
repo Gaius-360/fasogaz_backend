@@ -3,6 +3,7 @@
 // ✅ REFONTE: Abonnement classique pour les clients
 //    Sans abonnement → 3 revendeurs max (les plus proches)
 //    Avec abonnement → tous les revendeurs de toutes les villes + filtres débloqués
+// ✅ FIX: totalSpent — suppression de 'completed' absent de l'enum subscriptions
 // ==========================================
 
 const { User, Subscription, Pricing } = require('../models');
@@ -187,8 +188,13 @@ exports.getAccessStats = async (req, res) => {
 
     const totalPurchases = await Subscription.count({ where: { userId } });
 
+    // ✅ FIX: 'completed' n'existe pas dans enum_subscriptions_status
+    // Valeurs valides: 'pending', 'active', 'expired', 'cancelled', 'deleted'
     const totalSpent = await Subscription.sum('amount', {
-      where: { userId, status: { [Op.in]: ['active', 'completed'] } }
+      where: {
+        userId,
+        status: { [Op.in]: ['active', 'expired', 'deleted'] }
+      }
     });
 
     const lastSubscription = await Subscription.findOne({

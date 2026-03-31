@@ -1,9 +1,12 @@
 // ==========================================
 // FICHIER: controllers/simulationController.js
-// ✅ FIX: Redirection correcte après simulation
+// ✅ FIX CORS: fetch depuis la page HTML servie par le backend
+//    → origin = http://localhost:5000 → autorisé via server.js
+// ✅ FIX: activateClientAccess utilise Subscription (plus AccessPurchase)
+//    → cohérent avec paymentController.js et accessController.js
 // ==========================================
 
-const { Transaction, User, Subscription, AccessPurchase, Pricing } = require('../models');
+const { Transaction, User, Subscription, Pricing } = require('../models');
 const { Op } = require('sequelize');
 
 /**
@@ -29,9 +32,8 @@ exports.showSimulationPage = async (req, res) => {
       `);
     }
 
-    // ✅ Lire APP_URL depuis .env avec fallback
-    const appUrl = process.env.APP_URL || 'http://localhost:5173';
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+    const appUrl     = process.env.APP_URL     || 'http://localhost:5173';
+    const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 5000}`;
 
     console.log('🧪 Page simulation:', {
       token,
@@ -51,7 +53,6 @@ exports.showSimulationPage = async (req, res) => {
   <title>🧪 Simulation Paiement LigdiCash</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -61,7 +62,6 @@ exports.showSimulationPage = async (req, res) => {
       justify-content: center;
       padding: 20px;
     }
-    
     .container {
       background: white;
       border-radius: 20px;
@@ -70,14 +70,12 @@ exports.showSimulationPage = async (req, res) => {
       width: 100%;
       overflow: hidden;
     }
-    
     .header {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       padding: 30px;
       text-align: center;
       color: white;
     }
-    
     .simulation-badge {
       display: inline-block;
       background: rgba(251,191,36,0.9);
@@ -89,19 +87,9 @@ exports.showSimulationPage = async (req, res) => {
       margin-bottom: 12px;
       letter-spacing: 1px;
     }
-    
-    .header h1 {
-      font-size: 24px;
-      margin-bottom: 4px;
-    }
-    
-    .header p {
-      opacity: 0.85;
-      font-size: 14px;
-    }
-    
-    .content { padding: 30px; }
-    
+    .header h1 { font-size: 24px; margin-bottom: 4px; }
+    .header p  { opacity: 0.85; font-size: 14px; }
+    .content   { padding: 30px; }
     .payment-info {
       background: #f8fafc;
       border: 2px solid #e2e8f0;
@@ -109,7 +97,6 @@ exports.showSimulationPage = async (req, res) => {
       padding: 20px;
       margin-bottom: 20px;
     }
-    
     .info-row {
       display: flex;
       justify-content: space-between;
@@ -118,38 +105,14 @@ exports.showSimulationPage = async (req, res) => {
       border-bottom: 1px solid #e2e8f0;
       font-size: 14px;
     }
-    
     .info-row:last-child { border-bottom: none; }
-    
     .info-label { color: #64748b; }
     .info-value { font-weight: 600; color: #1e293b; }
-    
-    .amount-display {
-      text-align: center;
-      padding: 20px;
-      margin-bottom: 24px;
-    }
-    
-    .amount-label {
-      font-size: 13px;
-      color: #64748b;
-      margin-bottom: 6px;
-    }
-    
-    .amount-value {
-      font-size: 42px;
-      font-weight: 800;
-      color: #10b981;
-    }
-    
-    .amount-currency {
-      font-size: 18px;
-      color: #64748b;
-      font-weight: 400;
-    }
-    
+    .amount-display { text-align: center; padding: 20px; margin-bottom: 24px; }
+    .amount-label   { font-size: 13px; color: #64748b; margin-bottom: 6px; }
+    .amount-value   { font-size: 42px; font-weight: 800; color: #10b981; }
+    .amount-currency { font-size: 18px; color: #64748b; font-weight: 400; }
     .buttons { display: flex; flex-direction: column; gap: 12px; }
-    
     button {
       padding: 16px 24px;
       border: none;
@@ -163,50 +126,32 @@ exports.showSimulationPage = async (req, res) => {
       justify-content: center;
       gap: 10px;
     }
-    
-    button:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
     .btn-success {
       background: linear-gradient(135deg, #10b981, #059669);
       color: white;
       box-shadow: 0 4px 15px rgba(16,185,129,0.3);
     }
-    
     .btn-success:hover:not(:disabled) {
       transform: translateY(-2px);
       box-shadow: 0 8px 20px rgba(16,185,129,0.4);
     }
-    
     .btn-error {
       background: linear-gradient(135deg, #ef4444, #dc2626);
       color: white;
       box-shadow: 0 4px 15px rgba(239,68,68,0.3);
     }
-    
     .btn-error:hover:not(:disabled) {
       transform: translateY(-2px);
       box-shadow: 0 8px 20px rgba(239,68,68,0.4);
     }
-    
     .btn-cancel {
       background: #f1f5f9;
       color: #64748b;
       border: 2px solid #e2e8f0;
     }
-    
-    .btn-cancel:hover:not(:disabled) {
-      background: #e2e8f0;
-    }
-    
-    .loading {
-      display: none;
-      text-align: center;
-      padding: 30px;
-    }
-    
+    .btn-cancel:hover:not(:disabled) { background: #e2e8f0; }
+    .loading { display: none; text-align: center; padding: 30px; }
     .spinner {
       width: 50px;
       height: 50px;
@@ -216,16 +161,8 @@ exports.showSimulationPage = async (req, res) => {
       animation: spin 0.8s linear infinite;
       margin: 0 auto 16px;
     }
-    
-    .loading-text {
-      color: #64748b;
-      font-size: 15px;
-    }
-    
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    
+    .loading-text { color: #64748b; font-size: 15px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .note {
       margin-top: 20px;
       padding: 14px;
@@ -237,7 +174,6 @@ exports.showSimulationPage = async (req, res) => {
       display: flex;
       gap: 8px;
     }
-    
     .error-box {
       display: none;
       margin-top: 16px;
@@ -257,7 +193,6 @@ exports.showSimulationPage = async (req, res) => {
       <h1>Page de Paiement Test</h1>
       <p>LigdiCash - Test Environment</p>
     </div>
-    
     <div class="content">
       <div class="payment-info">
         <div class="info-row">
@@ -283,7 +218,7 @@ exports.showSimulationPage = async (req, res) => {
         </div>
         ` : ''}
       </div>
-      
+
       <div class="amount-display">
         <div class="amount-label">Montant à payer</div>
         <div class="amount-value">
@@ -291,7 +226,7 @@ exports.showSimulationPage = async (req, res) => {
           <span class="amount-currency">FCFA</span>
         </div>
       </div>
-      
+
       <div class="buttons" id="buttons">
         <button class="btn-success" onclick="simulatePayment('success')">
           ✅ Simuler Paiement Réussi
@@ -303,86 +238,80 @@ exports.showSimulationPage = async (req, res) => {
           ↩ Annuler le paiement
         </button>
       </div>
-      
+
       <div class="loading" id="loading">
         <div class="spinner"></div>
         <p class="loading-text">Traitement du paiement...</p>
       </div>
-      
+
       <div class="error-box" id="errorBox"></div>
-      
+
       <div class="note">
         <span>💡</span>
         <span>
-          <strong>Mode Test :</strong> Aucun argent réel n'est débité. 
+          <strong>Mode Test :</strong> Aucun argent réel n'est débité.
           Simulez le résultat souhaité pour tester votre application.
         </span>
       </div>
     </div>
   </div>
-  
+
   <script>
-    // ✅ FIX: URL du backend fixe (pas depuis APP_URL)
     const BACKEND_URL = '${backendUrl}';
-    const APP_URL = '${appUrl}';
-    const TOKEN = '${token}';
-    
+    const APP_URL     = '${appUrl}';
+    const TOKEN       = '${token}';
+
     async function simulatePayment(status) {
-      const buttons = document.getElementById('buttons');
-      const loading = document.getElementById('loading');
+      const buttons  = document.getElementById('buttons');
+      const loading  = document.getElementById('loading');
       const errorBox = document.getElementById('errorBox');
-      
-      // Afficher le loader
-      buttons.style.display = 'none';
-      loading.style.display = 'block';
+
+      buttons.style.display  = 'none';
+      loading.style.display  = 'block';
       errorBox.style.display = 'none';
-      
+
       try {
         console.log('🧪 Simulation:', status);
         console.log('📡 URL backend:', BACKEND_URL);
-        
+
         const response = await fetch(
           BACKEND_URL + '/api/payments/simulation/' + TOKEN + '/complete',
           {
             method: 'POST',
-            headers: { 
+            headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json'
             },
             body: JSON.stringify({ status })
           }
         );
-        
+
         console.log('📥 Status HTTP:', response.status);
-        
         const text = await response.text();
         console.log('📥 Réponse brute:', text);
-        
+
         let data;
         try {
           data = JSON.parse(text);
         } catch(e) {
-          throw new Error('Réponse invalide du serveur: ' + text.substring(0, 100));
+          throw new Error('Réponse invalide du serveur: ' + text.substring(0, 200));
         }
-        
+
         console.log('📥 Données:', data);
-        
+
         if (data.success && data.redirectUrl) {
           console.log('✅ Redirection vers:', data.redirectUrl);
           window.location.href = data.redirectUrl;
         } else {
           throw new Error(data.message || 'Erreur inconnue du serveur');
         }
-        
+
       } catch (error) {
         console.error('❌ Erreur simulation:', error);
-        
-        loading.style.display = 'none';
-        buttons.style.display = 'flex';
-        buttons.style.flexDirection = 'column';
-        
+        loading.style.display  = 'none';
+        buttons.style.display  = 'flex';
         errorBox.style.display = 'block';
-        errorBox.textContent = '❌ Erreur: ' + error.message;
+        errorBox.textContent   = '❌ Erreur: ' + error.message;
       }
     }
   </script>
@@ -408,11 +337,11 @@ exports.showSimulationPage = async (req, res) => {
  */
 function formatTransactionType(type) {
   const types = {
-    'seller_subscription': '📦 Abonnement Revendeur',
+    'seller_subscription':         '📦 Abonnement Revendeur',
     'seller_subscription_renewal': '🔄 Renouvellement Abonnement',
-    'seller_early_renewal': '⚡ Prolongation Anticipée',
-    'client_access': '🔑 Accès Client 24h',
-    'order_payment': '🛒 Paiement Commande'
+    'seller_early_renewal':        '⚡ Prolongation Anticipée',
+    'client_access':               '🔑 Abonnement Client',
+    'order_payment':               '🛒 Paiement Commande'
   };
   return types[type] || type;
 }
@@ -424,7 +353,7 @@ function formatTransactionType(type) {
  */
 exports.completeSimulation = async (req, res) => {
   try {
-    const { token } = req.params;
+    const { token }  = req.params;
     const { status } = req.body;
 
     console.log('🧪 Complétion simulation:', { token, status });
@@ -436,253 +365,221 @@ exports.completeSimulation = async (req, res) => {
     });
 
     if (!transaction) {
-      return res.status(404).json({ 
-        success: false, 
-        message: `Transaction non trouvée pour token: ${token}` 
+      return res.status(404).json({
+        success: false,
+        message: `Transaction non trouvée pour token: ${token}`
       });
     }
 
     console.log('✅ Transaction trouvée:', {
-      id: transaction.id,
+      id:     transaction.id,
       number: transaction.transactionNumber,
       status: transaction.status,
-      type: transaction.type,
+      type:   transaction.type,
       amount: transaction.amount
     });
 
-    // ✅ Vérifier que la transaction n'est pas déjà traitée
+    // Transaction déjà traitée → rediriger directement
     if (transaction.status === 'completed') {
       return res.json({
-        success: true,
+        success:     true,
         redirectUrl: `${appUrl}/payment/success?transaction=${transaction.transactionNumber}`
       });
     }
 
     if (status === 'success') {
-      await processSuccessfulPayment(transaction);
-
-      const redirectUrl = `${appUrl}/payment/success?transaction=${transaction.transactionNumber}`;
-      console.log('✅ Redirection succès:', redirectUrl);
-
+      await _processSuccessfulPayment(transaction);
       return res.json({
-        success: true,
-        redirectUrl
+        success:     true,
+        redirectUrl: `${appUrl}/payment/success?transaction=${transaction.transactionNumber}`
       });
 
     } else if (status === 'cancelled') {
       await transaction.update({
-        status: 'cancelled',
+        status:        'cancelled',
         failureReason: 'Annulé par l\'utilisateur (simulation)',
-        failedAt: new Date()
+        failedAt:      new Date()
       });
-
-      const redirectUrl = `${appUrl}/payment/cancel`;
-      console.log('↩ Redirection annulation:', redirectUrl);
-
       return res.json({
-        success: true,
-        redirectUrl
+        success:     true,
+        redirectUrl: `${appUrl}/payment/cancel`
       });
 
     } else {
+      // failed
       await transaction.update({
-        status: 'failed',
+        status:        'failed',
         failureReason: 'Paiement échoué (simulation)',
-        failedAt: new Date()
+        failedAt:      new Date()
       });
-
-      const redirectUrl = `${appUrl}/payment/error?message=${encodeURIComponent('Paiement échoué')}`;
-      console.log('❌ Redirection échec:', redirectUrl);
-
       return res.json({
-        success: true,
-        redirectUrl
+        success:     true,
+        redirectUrl: `${appUrl}/payment/error?message=${encodeURIComponent('Paiement échoué')}`
       });
     }
 
   } catch (error) {
     console.error('❌ Erreur complétion simulation:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };
 
-/**
- * Traiter un paiement réussi
- */
-async function processSuccessfulPayment(transaction) {
-  try {
-    await transaction.update({
-      status: 'completed',
-      completedAt: new Date()
-    });
+// ── Logique interne ───────────────────────────────────────────────────────────
 
-    const metadata = transaction.metadata || {};
-    const enrichedMetadata = {
-      ...metadata,
-      amount: transaction.amount,
-      price: transaction.amount
-    };
+async function _processSuccessfulPayment(transaction) {
+  await transaction.update({
+    status:      'completed',
+    completedAt: new Date()
+  });
 
-    console.log('💳 Traitement paiement réussi:', {
-      type: transaction.type,
-      amount: transaction.amount
-    });
+  const metadata = {
+    ...(transaction.metadata || {}),
+    amount: transaction.amount,
+    price:  transaction.amount
+  };
 
-    if (
-      transaction.type === 'seller_subscription' ||
-      transaction.type === 'seller_subscription_renewal' ||
-      transaction.type === 'seller_early_renewal'
-    ) {
-      await activateSubscription(transaction.userId, enrichedMetadata);
-    } else if (transaction.type === 'client_access') {
-      await activateClientAccess(transaction.userId, enrichedMetadata);
-    }
+  console.log('💳 Traitement paiement réussi:', {
+    type:   transaction.type,
+    amount: transaction.amount
+  });
 
-    console.log(`✅ Paiement traité: ${transaction.transactionNumber}`);
+  if (
+    transaction.type === 'seller_subscription' ||
+    transaction.type === 'seller_subscription_renewal' ||
+    transaction.type === 'seller_early_renewal'
+  ) {
+    await _activateSellerSubscription(transaction.userId, metadata);
 
-  } catch (error) {
-    console.error('❌ Erreur traitement paiement:', error);
-    throw error;
+  } else if (transaction.type === 'client_access') {
+    // ✅ FIX: client_access → abonnement Subscription (plus AccessPurchase)
+    await _activateClientSubscription(transaction.userId, metadata);
   }
+
+  console.log(`✅ Simulation traitée: ${transaction.transactionNumber}`);
 }
 
 /**
  * Activer un abonnement revendeur
  */
-async function activateSubscription(userId, metadata) {
-  try {
-    console.log('📝 Activation abonnement pour user:', userId);
+async function _activateSellerSubscription(userId, metadata) {
+  const pricingConfig = await Pricing.findOne({ where: { targetRole: 'revendeur' } });
 
-    const pricingConfig = await Pricing.findOne({ 
-      where: { targetRole: 'revendeur' }
-    });
-
-    if (!pricingConfig || !pricingConfig.isActive) {
-      console.log('⚠️ Système de tarification non actif');
-      return;
-    }
-
-    const planType = metadata.planType || 'monthly';
-    const planConfig = pricingConfig.plans[planType];
-
-    if (!planConfig) {
-      throw new Error(`Configuration du plan "${planType}" introuvable`);
-    }
-
-    const existingSubscription = await Subscription.findOne({
-      where: {
-        userId,
-        isActive: true,
-        endDate: { [Op.gt]: new Date() }
-      }
-    });
-
-    let endDate;
-
-    if (metadata.isEarlyRenewal && existingSubscription) {
-      endDate = new Date(existingSubscription.endDate);
-      endDate.setDate(endDate.getDate() + planConfig.duration);
-
-      await existingSubscription.update({
-        endDate,
-        hasEarlyRenewal: true
-      });
-
-      console.log(`✅ Abonnement prolongé jusqu'au ${endDate}`);
-    } else {
-      const startDate = new Date();
-      endDate = new Date();
-      endDate.setDate(endDate.getDate() + planConfig.duration);
-
-      if (existingSubscription) {
-        await existingSubscription.update({
-          isActive: false,
-          status: 'expired'
-        });
-      }
-
-      await Subscription.create({
-        userId,
-        planType,
-        amount: planConfig.price,
-        initialAmount: planConfig.price,
-        duration: planConfig.duration,
-        startDate,
-        endDate,
-        paymentMethod: 'ligdicash',
-        status: 'active',
-        isActive: true,
-        autoRenew: false,
-        hasEarlyRenewal: false
-      });
-
-      console.log(`✅ Abonnement créé jusqu'au ${endDate}`);
-    }
-
-    await User.update(
-      {
-        subscriptionEndDate: endDate,
-        hasActiveSubscription: true,
-        hasActiveAccess: true
-      },
-      { where: { id: userId } }
-    );
-
-  } catch (error) {
-    console.error('❌ Erreur activation abonnement:', error);
-    throw error;
+  if (!pricingConfig || !pricingConfig.isActive) {
+    console.log('⚠️ Système de tarification revendeur non actif');
+    return;
   }
+
+  const planType   = metadata.planType || 'monthly';
+  const planConfig = pricingConfig.plans?.[planType];
+
+  if (!planConfig) {
+    throw new Error(`Configuration du plan revendeur "${planType}" introuvable`);
+  }
+
+  const existingSubscription = await Subscription.findOne({
+    where: {
+      userId,
+      isActive: true,
+      endDate: { [Op.gt]: new Date() }
+    }
+  });
+
+  let endDate;
+
+  if (metadata.isEarlyRenewal && existingSubscription) {
+    // Prolongation anticipée : ajouter la durée à la date existante
+    endDate = new Date(existingSubscription.endDate);
+    endDate.setDate(endDate.getDate() + planConfig.duration);
+
+    await existingSubscription.update({
+      endDate,
+      hasEarlyRenewal: true
+    });
+
+    console.log(`✅ Abonnement revendeur prolongé jusqu'au ${endDate.toLocaleDateString('fr-FR')}`);
+
+  } else {
+    // Nouvel abonnement ou remplacement
+    const startDate = new Date();
+    endDate = new Date();
+    endDate.setDate(endDate.getDate() + planConfig.duration);
+
+    if (existingSubscription) {
+      await existingSubscription.update({ isActive: false, status: 'expired' });
+    }
+
+    await Subscription.create({
+      userId,
+      planType,
+      amount:          planConfig.price,
+      initialAmount:   planConfig.price,
+      duration:        planConfig.duration,
+      startDate,
+      endDate,
+      paymentMethod:   'ligdicash',
+      status:          'active',
+      isActive:        true,
+      autoRenew:       false,
+      hasEarlyRenewal: false
+    });
+
+    console.log(`✅ Abonnement revendeur créé jusqu'au ${endDate.toLocaleDateString('fr-FR')}`);
+  }
+
+  await User.update(
+    { subscriptionEndDate: endDate, hasActiveSubscription: true, hasActiveAccess: true },
+    { where: { id: userId } }
+  );
 }
 
 /**
- * Activer un accès client 24h
+ * Activer un abonnement client (accès à tous les revendeurs)
+ * ✅ FIX: utilise Subscription + Pricing client (cohérent avec paymentController.js)
+ *    L'ancienne version utilisait AccessPurchase + durée fixe 24h → supprimée
  */
-async function activateClientAccess(userId, metadata) {
-  try {
-    console.log('📝 Activation accès 24h pour user:', userId);
+async function _activateClientSubscription(userId, metadata) {
+  const pricingConfig = await Pricing.findOne({ where: { targetRole: 'client' } });
 
-    const durationHours = metadata.duration || 24;
-    const purchaseDate = new Date();
-    const expiryDate = new Date();
-    expiryDate.setHours(expiryDate.getHours() + durationHours);
-
-    let amount = metadata.amount || metadata.price;
-
-    if (!amount) {
-      const pricingConfig = await Pricing.findOne({ 
-        where: { targetRole: 'client' }
-      });
-      amount = pricingConfig?.price || 0;
-    }
-
-    await AccessPurchase.create({
-      userId,
-      amount: parseFloat(amount),
-      durationHours,
-      purchaseDate,
-      expiryDate,
-      paymentMethod: 'ligdicash',
-      status: 'completed',
-      isActive: true
-    });
-
-    await User.update(
-      {
-        hasActiveAccess: true,
-        accessExpiryDate: expiryDate
-      },
-      { where: { id: userId } }
-    );
-
-    console.log(`✅ Accès 24h activé jusqu'au ${expiryDate}`);
-
-  } catch (error) {
-    console.error('❌ Erreur activation accès:', error);
-    throw error;
+  if (!pricingConfig || !pricingConfig.isActive) {
+    console.log('⚠️ Système de tarification client non actif');
+    return;
   }
+
+  const planType   = metadata.planType || 'monthly';
+  const planConfig = pricingConfig.plans?.[planType];
+
+  if (!planConfig) {
+    throw new Error(`Configuration du plan client "${planType}" introuvable`);
+  }
+
+  const startDate = new Date();
+  const endDate   = new Date();
+  endDate.setDate(endDate.getDate() + planConfig.duration);
+
+  await Subscription.create({
+    userId,
+    planType,
+    amount:        parseFloat(metadata.amount || planConfig.price),
+    initialAmount: parseFloat(metadata.amount || planConfig.price),
+    duration:      planConfig.duration,
+    startDate,
+    endDate,
+    paymentMethod: 'ligdicash',
+    status:        'active',
+    isActive:      true,
+    autoRenew:     false,
+    hasEarlyRenewal: false
+  });
+
+  await User.update(
+    { subscriptionEndDate: endDate, hasActiveSubscription: true, hasActiveAccess: true },
+    { where: { id: userId } }
+  );
+
+  console.log(`✅ Abonnement client activé jusqu'au ${endDate.toLocaleDateString('fr-FR')}`);
 }
 
 module.exports = exports;
