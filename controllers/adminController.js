@@ -1,12 +1,70 @@
 // ==========================================
 // FICHIER: controllers/adminController.js
-// ✅ AJOUT: resetUserPassword — réinitialisation MDP par l'admin
-//           (flux WhatsApp support : pas d'OTP côté utilisateur)
+// ✅ CORRECTIONS: deleteSeller, deleteClient, deleteUser
+//    → suppression des données liées avant user.destroy()
+//    pour éviter SequelizeForeignKeyConstraintError
 // ==========================================
 
 const db = require('../models');
 const { Op } = require('sequelize');
 const ResponseHandler = require('../utils/responseHandler');
+
+// ========================================
+// HELPER PRIVÉ — supprime toutes les données liées à un userId
+// ========================================
+
+async function destroyUserData(userId) {
+  // 1. Notifications
+  await db.Notification.destroy({ where: { userId } });
+
+  // 2. Avis (en tant que vendeur ET en tant que client)
+  if (db.Review) {
+    await db.Review.destroy({ where: { sellerId:   userId } });
+    await db.Review.destroy({ where: { customerId: userId } });
+  }
+
+  // 3. OrderItems → Orders (vendeur + client)
+  if (db.Order && db.OrderItem) {
+    const orders = await db.Order.findAll({
+      where: {
+        [Op.or]: [{ sellerId: userId }, { customerId: userId }]
+      },
+      attributes: ['id']
+    });
+
+    if (orders.length > 0) {
+      await db.OrderItem.destroy({
+        where: { orderId: orders.map(o => o.id) }
+      });
+    }
+
+    await db.Order.destroy({
+      where: {
+        [Op.or]: [{ sellerId: userId }, { customerId: userId }]
+      }
+    });
+  }
+
+  // 4. Produits
+  if (db.Product) {
+    await db.Product.destroy({ where: { sellerId: userId } });
+  }
+
+  // 5. Abonnement
+  if (db.Subscription) {
+    await db.Subscription.destroy({ where: { userId } });
+  }
+
+  // 6. Adresses
+  if (db.Address) {
+    await db.Address.destroy({ where: { userId } });
+  }
+
+  // 7. Transactions
+  if (db.Transaction) {
+    await db.Transaction.destroy({ where: { userId } });
+  }
+}
 
 // ========================================
 // STATISTIQUES DASHBOARD
@@ -445,8 +503,7 @@ exports.toggleUserStatus = async (req, res) => {
 };
 
 // ==========================================
-// ✅ NOUVEAU: Réinitialiser le mot de passe utilisateur
-// @desc    L'admin réinitialise le MDP après vérification d'identité via WhatsApp
+// ✅ Réinitialiser le mot de passe utilisateur
 // @route   PUT /api/admin/users/:id/reset-password
 // @access  Private (admin)
 // ==========================================
@@ -480,7 +537,6 @@ exports.resetUserPassword = async (req, res) => {
       `✅ Mot de passe réinitialisé par admin pour: ${user.phone} (${user.role})`
     );
 
-    // Notifier l'utilisateur dans l'app
     await db.Notification.create({
       userId: user.id,
       type: 'system',
@@ -499,6 +555,7 @@ exports.resetUserPassword = async (req, res) => {
   }
 };
 
+// ✅ CORRIGÉ — supprime toutes les données liées avant de supprimer l'utilisateur
 exports.deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -506,6 +563,7 @@ exports.deleteUser = async (req, res) => {
     const user = await db.User.findByPk(id);
     if (!user) return ResponseHandler.error(res, 'Utilisateur non trouvé', 404);
 
+    await destroyUserData(id);
     await user.destroy();
 
     return ResponseHandler.success(res, 'Utilisateur supprimé');
@@ -554,7 +612,8 @@ exports.getClientById = async (req, res) => {
         { model: db.User, as: 'seller', attributes: ['id', 'businessName', 'phone'] },
         {
           model: db.OrderItem, as: 'items',
-          include: [{ model: db.Product, as: 'product', attributes: ['bottleType', 'brand'] }]
+          required: false,
+          include: [{ model: db.Product, as: 'product', attributes: ['bottleType', 'brand'], required: false }]
         }
       ],
       order: [['createdAt', 'DESC']]
@@ -646,6 +705,7 @@ exports.unblockClient = async (req, res) => {
   }
 };
 
+// ✅ CORRIGÉ
 exports.deleteClient = async (req, res) => {
   try {
     const client = await db.User.findByPk(req.params.id);
@@ -654,6 +714,7 @@ exports.deleteClient = async (req, res) => {
       return ResponseHandler.error(res, 'Client non trouvé', 404);
     }
 
+    await destroyUserData(client.id);
     await client.destroy();
 
     return ResponseHandler.success(res, 'Client supprimé');
@@ -715,6 +776,7 @@ exports.getSellerById = async (req, res) => {
       attributes: { exclude: ['password'] },
       include: [{
         model: db.Product, as: 'products',
+        required: false,
         attributes: [
           'id', 'bottleType', 'brand', 'price', 'quantity',
           'status', 'viewCount', 'orderCount', 'createdAt'
@@ -729,10 +791,19 @@ exports.getSellerById = async (req, res) => {
     const orders = await db.Order.findAll({
       where: { sellerId: id },
       include: [
-        { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'phone'] },
+        {
+          model: db.User, as: 'customer',
+          attributes: ['id', 'firstName', 'lastName', 'phone'],
+          required: false
+        },
         {
           model: db.OrderItem, as: 'items',
-          include: [{ model: db.Product, as: 'product', attributes: ['bottleType', 'brand'] }]
+          required: false,
+          include: [{
+            model: db.Product, as: 'product',
+            attributes: ['bottleType', 'brand'],
+            required: false
+          }]
         }
       ],
       order: [['createdAt', 'DESC']]
@@ -741,8 +812,16 @@ exports.getSellerById = async (req, res) => {
     const reviews = await db.Review.findAll({
       where: { sellerId: id },
       include: [
-        { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName'] },
-        { model: db.Order, as: 'order', attributes: ['id', 'orderNumber'] }
+        {
+          model: db.User, as: 'customer',
+          attributes: ['id', 'firstName', 'lastName'],
+          required: false
+        },
+        {
+          model: db.Order, as: 'order',
+          attributes: ['id', 'orderNumber'],
+          required: false
+        }
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -957,6 +1036,7 @@ exports.reactivateSeller = async (req, res) => {
   }
 };
 
+// ✅ CORRIGÉ
 exports.deleteSeller = async (req, res) => {
   try {
     const seller = await db.User.findByPk(req.params.id);
@@ -965,6 +1045,7 @@ exports.deleteSeller = async (req, res) => {
       return ResponseHandler.error(res, 'Revendeur non trouvé', 404);
     }
 
+    await destroyUserData(seller.id);
     await seller.destroy();
 
     return ResponseHandler.success(res, 'Revendeur supprimé');
@@ -1052,9 +1133,12 @@ exports.getAllOrders = async (req, res) => {
     const { count, rows: orders } = await db.Order.findAndCountAll({
       where,
       include: [
-        { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'phone'] },
-        { model: db.User, as: 'seller', attributes: ['id', 'businessName', 'phone'] },
-        { model: db.OrderItem, as: 'items', include: [{ model: db.Product, as: 'product' }] }
+        { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'phone'], required: false },
+        { model: db.User, as: 'seller', attributes: ['id', 'businessName', 'phone'], required: false },
+        {
+          model: db.OrderItem, as: 'items', required: false,
+          include: [{ model: db.Product, as: 'product', required: false }]
+        }
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
@@ -1082,11 +1166,14 @@ exports.getOrderById = async (req, res) => {
 
     const order = await db.Order.findByPk(id, {
       include: [
-        { model: db.User, as: 'customer', attributes: { exclude: ['password'] } },
-        { model: db.User, as: 'seller', attributes: { exclude: ['password'] } },
-        { model: db.Address, as: 'deliveryAddress' },
-        { model: db.OrderItem, as: 'items', include: [{ model: db.Product, as: 'product' }] },
-        { model: db.Review, as: 'review' }
+        { model: db.User, as: 'customer', attributes: { exclude: ['password'] }, required: false },
+        { model: db.User, as: 'seller', attributes: { exclude: ['password'] }, required: false },
+        { model: db.Address, as: 'deliveryAddress', required: false },
+        {
+          model: db.OrderItem, as: 'items', required: false,
+          include: [{ model: db.Product, as: 'product', required: false }]
+        },
+        { model: db.Review, as: 'review', required: false }
       ]
     });
 
@@ -1120,7 +1207,7 @@ exports.getAllSubscriptions = async (req, res) => {
           model: db.User, as: 'user',
           attributes: ['id', 'firstName', 'lastName', 'phone', 'role', 'businessName']
         },
-        { model: db.Transaction, as: 'transaction' }
+        { model: db.Transaction, as: 'transaction', required: false }
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
@@ -1185,9 +1272,9 @@ exports.getAllReviews = async (req, res) => {
     const { count, rows: reviews } = await db.Review.findAndCountAll({
       where,
       include: [
-        { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'phone'] },
-        { model: db.User, as: 'seller', attributes: ['id', 'businessName', 'phone'] },
-        { model: db.Order, as: 'order', attributes: ['id', 'orderNumber', 'total'] }
+        { model: db.User, as: 'customer', attributes: ['id', 'firstName', 'lastName', 'phone'], required: false },
+        { model: db.User, as: 'seller', attributes: ['id', 'businessName', 'phone'], required: false },
+        { model: db.Order, as: 'order', attributes: ['id', 'orderNumber', 'total'], required: false }
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
