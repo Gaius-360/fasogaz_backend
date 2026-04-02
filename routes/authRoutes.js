@@ -12,8 +12,8 @@ const {
   forgotPassword, resetPassword, getMe,
   updateProfile, changePassword, updateDeliverySettings,
   deleteAccount, requestAccountDeletion, cancelAccountDeletion,
-  refreshToken, // ✅ NOUVEAU
-  logout,       // ✅ NOUVEAU
+  refreshToken, 
+  logout,      
 } = require('../controllers/authController');
 
 const { protect } = require('../middleware/auth');

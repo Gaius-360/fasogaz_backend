@@ -8,6 +8,11 @@
 //    - PERSISTANCE: refreshToken retourné dans le JSON (pas de cookie)
 //      → fiable en cross-domain (fasogaz.onrender.com / fasogaz-backend.onrender.com)
 //      → le client le stocke en localStorage et l'envoie dans le body
+// ✅ CORRECTION BUG PWA: accessToken passé de 15m à 1h
+//    → laisse une fenêtre suffisante pour le refresh sur réseau dégradé
+//      (mobile 2G, Render free-tier cold start ~30s)
+//    → combiné avec le refresh proactif sur visibilitychange côté client,
+//      l'utilisateur ne voit jamais de déconnexion intempestive
 // ==========================================
 
 const bcrypt = require('bcryptjs');
@@ -32,12 +37,27 @@ const generateRefreshToken = (userId) =>
     { expiresIn: '90d' }
   );
 
-/** Access token JWT — 15 min — signé avec JWT_SECRET */
+/**
+ * Access token JWT — 1h — signé avec JWT_SECRET
+ *
+ * ✅ Passé de 15m à 1h pour la robustesse PWA mobile :
+ * - Sur réseau dégradé (2G, Render cold start), un refresh peut prendre
+ *   jusqu'à 30-40s. Avec 15m, la moindre suspension de l'app en
+ *   arrière-plan suffit à expirer le token avant que le refresh proactif
+ *   n'ait le temps de s'exécuter.
+ * - 1h donne une fenêtre confortable. Le refresh silencieux sur
+ *   visibilitychange (côté App.jsx) renouvelle le token à chaque retour
+ *   au premier plan, donc en pratique l'utilisateur ne voit jamais
+ *   de délai.
+ * - Sécurité : le refreshToken (90j) reste le vrai facteur limitant.
+ *   Si un accessToken est volé, la fenêtre d'exposition passe de 15m
+ *   à 1h — risque acceptable pour une app mobile grand public.
+ */
 const generateAccessToken = (user) =>
   jwt.sign(
     { id: user.id, phone: user.phone, role: user.role },
     process.env.JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: '1h' }
   );
 
 // ==========================================
